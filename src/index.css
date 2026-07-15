@@ -1,0 +1,176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  --taylor-red: #E21836;
+  --taylor-red-light: #FF4D6A;
+  --taylor-red-dark: #B90E28;
+
+  --balance-bg: #E0F2F1;
+  --balance-accent: #00BFA5;
+
+  --nexus-dark: #0A0A0F;
+  --nexus-card: #13131F;
+}
+
+body {
+  background-color: #050508;
+  color: #FFFFFF;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  height: 4px;
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+::selection {
+  background: rgba(255, 77, 106, 0.3);
+  color: white;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-strong {
+  background: rgba(26, 26, 38, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Subtle animated gradient background */
+.bg-mesh {
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(200, 16, 46, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(78, 234, 175, 0.05) 0%, transparent 50%),
+    #050508;
+}
+
+/* Hide scrollbars for horizontal scroll containers */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Pulse animation for notification dot */
+@keyframes pulse-dot {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.4);
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Shimmer effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.04) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+/* Light mode reinforcement: make panels and sections visibly separated with borders. */
+.theme-light .glass {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.theme-light .glass-strong {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.2);
+}
+
+.theme-light [class*="bg-white/5"] {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.theme-light [class*="bg-white/10"] {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.theme-light [class*="border-white/5"],
+.theme-light [class*="border-white/10"],
+.theme-light [class*="border-white/20"] {
+  border-color: rgba(15, 23, 42, 0.2) !important;
+}
+
+.theme-light [class*="bg-[#0"],
+.theme-light [class*="bg-[#1"] {
+  border: 1px solid rgba(15, 23, 42, 0.16);
+}
+
+/* Light mode typography: convert dark-theme text utilities to readable dark text. */
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+.theme-light .text-gray-50,
+.theme-light .text-gray-100,
+.theme-light .text-gray-200,
+.theme-light .text-gray-300,
+.theme-light .text-gray-400,
+.theme-light .text-gray-500,
+.theme-light .text-gray-600,
+.theme-light .text-slate-300,
+.theme-light .text-slate-400,
+.theme-light .text-slate-500 {
+  color: #111827 !important;
+}
+
+.theme-light input,
+.theme-light textarea,
+.theme-light select {
+  color: #0f172a;
+}
+
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #4b5563;
+}
