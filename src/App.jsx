@@ -11,9 +11,7 @@ import NotificationCenter from "./components/NotificationCenter";
 import SchedulePage from "./components/SchedulePage";
 import AdminDashboard from "./components/AdminDashboard";
 import FocusMeterWidget from "./components/FocusMeterWidget";
-import { clubs } from "./data/clubs";
-import ClubCard from "./components/ClubCard";
-import ClubDetailModal from "./components/ClubDetailModal";
+import Explore from "./pages/Explore";
 import { leaderboardData } from "./data/leaderboard";
 import LeaderboardRow from "./components/LeaderboardRow";
 import LandingPage from "./pages/LandingPage";
@@ -44,72 +42,6 @@ import CompleteProfilePage from "./pages/CompleteProfilePage";
 import Chatbot from "./components/Chatbot";
 import { supabase } from "./components/GoogleLogin";
 import { getCurrentSupabaseUser } from "./libs/auth";
-
-// Explore Page - Clubs & Societies
-const Explore = () => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedClub, setSelectedClub] = useState(null);
-  const [showClubDetail, setShowClubDetail] = useState(false);
-
-  const filteredClubs = clubs.filter(
-    (club) =>
-      club.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      club.category.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
-
-  const handleOpenClub = (club) => {
-    setSelectedClub(club);
-    setShowClubDetail(true);
-  };
-
-  return (
-    <>
-      <div className="px-5 pt-8 pb-24">
-        <h1 className="text-2xl font-bold text-white mb-2">Explore Campus</h1>
-        <p className="text-gray-400 text-sm mb-6">Find your community.</p>
-
-        <div className="mb-4 w-full flex items-center justify-center rounded-xl px-3 py-2.5 bg-taylor-red/10 border border-taylor-red/20">
-          <span className="text-[10px] font-inter font-semibold text-taylor-red uppercase tracking-wider">
-            Clubs & Societies
-          </span>
-        </div>
-
-        {/* Search */}
-        <div className="relative mb-6">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <span className="text-gray-500 text-lg">🔍</span>
-          </div>
-          <input
-            type="text"
-            placeholder="Search clubs, societies..."
-            className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-taylor-red transition-colors text-sm"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-
-        {/* Clubs */}
-        <div className="space-y-4">
-          {filteredClubs.map((club) => (
-            <ClubCard key={club.id} club={club} onOpen={handleOpenClub} />
-          ))}
-        </div>
-
-        {filteredClubs.length === 0 && (
-          <div className="text-center py-10 text-gray-500 text-sm">
-            No clubs found matching "{searchTerm}"
-          </div>
-        )}
-      </div>
-
-      <ClubDetailModal
-        club={selectedClub}
-        isOpen={showClubDetail}
-        onClose={() => setShowClubDetail(false)}
-      />
-    </>
-  );
-};
 
 export default function App() {
   const MANUAL_LOGOUT_KEY = "taylors_manual_logout";
