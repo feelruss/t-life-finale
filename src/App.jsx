@@ -113,7 +113,18 @@ const Explore = () => {
 
 export default function App() {
   const MANUAL_LOGOUT_KEY = "taylors_manual_logout";
-  const [activeTab, setActiveTab] = useState("home"); // 'home' | 'schedule' | 'explore' | 'profile'
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedTab = sessionStorage.getItem("taylors_active_tab");
+
+    return ["home", "schedule", "explore", "profile"].includes(savedTab)
+      ? savedTab
+      : "home";
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("taylors_active_tab", activeTab);
+  }, [activeTab]);
+
   const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'complete-profile' | 'app'
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
@@ -187,7 +198,9 @@ export default function App() {
     };
   };
 
-  const applyAuthenticatedUser = useCallback((user) => {
+  const applyAuthenticatedUser = useCallback((user, options = {}) => {
+    const { resetTab = false } = options;
+
     if (!user) {
       setCurrentScreen("login");
       return;
@@ -214,9 +227,13 @@ export default function App() {
       return;
     }
 
-    // Programme exists, or this is an admin account.
     setPendingProfileUser(null);
-    setActiveTab("home");
+
+    // Only reset to Home immediately after a real login.
+    if (resetTab) {
+      setActiveTab("home");
+    }
+
     setCurrentScreen("app");
   }, []);
 
@@ -365,13 +382,11 @@ export default function App() {
     };
 
     document.addEventListener("visibilitychange", refreshProfile);
-    window.addEventListener("focus", refreshProfile);
 
     return () => {
       isMounted = false;
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", refreshProfile);
-      window.removeEventListener("focus", refreshProfile);
     };
   }, [applyAuthenticatedUser]);
 
@@ -567,6 +582,7 @@ export default function App() {
     setMode("focus");
     setShowAdmin(false);
     setActiveTab("home");
+    sessionStorage.setItem("taylors_active_tab", "home");
     setShowNotifications(false);
     setShowEventDetail(false);
     setSelectedEvent(null);
@@ -577,11 +593,6 @@ export default function App() {
     ]).catch((error) => {
       console.warn("Supabase signOut failed:", error);
     });
-
-    // Hard reset fallback for sticky auth/render states.
-    setTimeout(() => {
-      window.location.reload();
-    }, 0);
   };
 
   const handleRSVP = (event) => {
@@ -655,9 +666,28 @@ export default function App() {
     : defaultWeeklyTimetable;
 
   return (
-    <div className="min-h-screen bg-mesh flex justify-center items-start font-sans theme-dark text-gray-100 bg-[#050508]">
+    <div
+      className="
+    flex min-h-[100dvh] w-full
+    items-start justify-center
+    overflow-hidden
+    bg-[#050508] bg-mesh
+    font-sans text-gray-100
+    theme-dark
+  "
+    >
       {/* Mobile Container */}
-      <div className="w-full max-w-[430px] h-screen relative flex flex-col shadow-2xl overflow-hidden bg-[#050508] border-x border-white/5">
+      <div
+        className="
+    relative flex
+    h-[100dvh] min-h-[100dvh]
+    w-full max-w-[430px]
+    flex-col overflow-hidden
+    border-x border-white/5
+    bg-[#050508]
+    shadow-2xl
+  "
+      >
         <AnimatePresence mode="wait">
           {currentScreen === "auth-loading" && (
             <motion.div
@@ -716,7 +746,7 @@ export default function App() {
             >
               <LoginPage
                 onLogin={({ user }) => {
-                  applyAuthenticatedUser(user);
+                  applyAuthenticatedUser(user, { resetTab: true });
                 }}
               />
             </motion.div>
@@ -725,13 +755,20 @@ export default function App() {
           {currentScreen === "complete-profile" && (
             <motion.div
               key="complete-profile"
-              className="absolute inset-0 z-50 bg-[#050508]"
+              className="
+  absolute inset-0 z-50
+  overflow-x-hidden overflow-y-auto
+  overscroll-y-auto
+  bg-[#050508]
+  touch-pan-y
+  [-webkit-overflow-scrolling:touch]
+"
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
             >
               <CompleteProfilePage
                 user={pendingProfileUser}
                 onCompleted={(completedUser) => {
-                  applyAuthenticatedUser(completedUser);
+                  applyAuthenticatedUser(completedUser, { resetTab: true });
                 }}
               />
             </motion.div>
@@ -740,17 +777,21 @@ export default function App() {
           {currentScreen === "app" && (
             <motion.div
               key="app"
-              className={`flex flex-col h-full absolute inset-0 ${isDarkTheme ? "bg-[#050508]" : "bg-[#f9f7f3]"}`}
+              className={`absolute inset-0 flex min-h-0 flex-col ${
+                isDarkTheme ? "bg-[#050508]" : "bg-[#f9f7f3]"
+              }`}
               initial={{ opacity: 0, x: "100%" }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
             >
-              {/* Decorative Top Bar */}
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-taylor-red via-taylor-red-light to-taylor-red z-50 pointer-events-none" />
+              <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 h-1 bg-gradient-to-r from-taylor-red via-taylor-red-light to-taylor-red" />
 
-              {/* Header */}
               <div
-                className={`flex-none z-40 backdrop-blur-md sticky top-0 ${isDarkTheme ? "bg-[#050508]/80" : "bg-[#f9f7f3]/90 border-b border-black/5"}`}
+                className={`z-40 flex-none backdrop-blur-md ${
+                  isDarkTheme
+                    ? "bg-[#050508]/80"
+                    : "border-b border-black/5 bg-[#f9f7f3]/90"
+                }`}
               >
                 <Header
                   points={points}
@@ -762,39 +803,62 @@ export default function App() {
                 />
               </div>
 
-              {/* Main Content */}
-              <main className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar pb-24 relative">
+              <main
+                className="
+    relative min-h-0 flex-1
+    overflow-x-hidden overflow-y-auto
+    overscroll-y-contain
+    hide-scrollbar
+    touch-pan-y
+    [-webkit-overflow-scrolling:touch]
+  "
+              >
                 <AnimatePresence mode="wait">
                   {activeTab === "home" && (
                     <motion.div
                       key="home"
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      transition={{ duration: 0.2 }}
-                      className={`transition-all duration-500 ${
+                      initial={false}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.12 }}
+                      className={`min-h-full transition-colors duration-500 ${
                         mode === "focus"
                           ? "bg-[#3f000a]"
                           : "bg-gradient-to-br from-[#0f2a27] via-[#050508] to-[#0d1f1a]"
                       }`}
                     >
-                      <div className="px-5 pt-6 pb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="flex flex-col gap-3 px-5 pb-4 pt-6 md:flex-row md:items-center md:justify-between">
                         <div>
                           <p
-                            className={`text-sm uppercase tracking-[0.22em] ${mode === "focus" ? "text-red-200" : "text-teal-200"}`}
+                            className={`text-sm uppercase tracking-[0.22em] ${
+                              mode === "focus"
+                                ? "text-red-200"
+                                : "text-teal-200"
+                            }`}
                           >
                             Current mode
                           </p>
+
                           <h2 className="text-2xl font-bold text-white">
                             {mode === "focus" ? "Focus Mode" : "Balance Mode"}
                           </h2>
                         </div>
+
                         <div
-                          className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold ${mode === "focus" ? "bg-taylor-red/15 text-red-200 border border-taylor-red/30" : "bg-teal-400/10 text-teal-300 border border-teal-300/20"}`}
+                          className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold ${
+                            mode === "focus"
+                              ? "border border-taylor-red/30 bg-taylor-red/15 text-red-200"
+                              : "border border-teal-300/20 bg-teal-400/10 text-teal-300"
+                          }`}
                         >
                           <span
-                            className={`w-2 h-2 rounded-full ${mode === "focus" ? "bg-taylor-red-light" : "bg-teal-300"}`}
+                            className={`h-2 w-2 rounded-full ${
+                              mode === "focus"
+                                ? "bg-taylor-red-light"
+                                : "bg-teal-300"
+                            }`}
                           />
+
                           {mode === "focus" ? "Deep focus" : "Chill balance"}
                         </div>
                       </div>
@@ -803,14 +867,20 @@ export default function App() {
                         mode={mode}
                         timetableData={activeDailyTimetable}
                       />
-                      <div className="px-5 pb-2 mt-3">
+
+                      <div className="mt-3 px-5 pb-2">
                         <div className="mb-2">
                           <p
-                            className={`text-[11px] font-inter font-medium uppercase tracking-widest ${mode === "focus" ? "text-red-100" : "text-teal-100"}`}
+                            className={`font-inter text-[11px] font-medium uppercase tracking-widest ${
+                              mode === "focus"
+                                ? "text-red-100"
+                                : "text-teal-100"
+                            }`}
                           >
                             Your progress right now
                           </p>
                         </div>
+
                         <FocusMeterWidget
                           currentMode={mode}
                           focusScore={aiMeter.focusScore}
@@ -820,7 +890,9 @@ export default function App() {
                           onRefreshRecommendation={refreshRecommendation}
                         />
                       </div>
+
                       <ModeToggle mode={mode} onToggle={toggleMode} />
+
                       <EventFeed
                         mode={mode}
                         onCheckIn={handleCheckIn}
@@ -829,11 +901,15 @@ export default function App() {
                       />
                     </motion.div>
                   )}
+
                   {activeTab === "schedule" && (
                     <motion.div
                       key="schedule"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="min-h-full"
                     >
                       <SchedulePage
                         weeklyData={activeWeeklyTimetable}
@@ -843,20 +919,28 @@ export default function App() {
                       />
                     </motion.div>
                   )}
+
                   {activeTab === "explore" && (
                     <motion.div
                       key="explore"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="min-h-full bg-[#050508]"
                     >
                       <Explore />
                     </motion.div>
                   )}
+
                   {activeTab === "profile" && (
                     <motion.div
                       key="profile"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="min-h-full bg-[#050508]"
                     >
                       <Profile
                         mode={mode}
@@ -866,34 +950,47 @@ export default function App() {
                       />
                     </motion.div>
                   )}
-                  {/* 'privacy' tab removed — PrivacyDashboard merged into Profile page */}
                 </AnimatePresence>
               </main>
 
-              {/* Bottom Navigation */}
               <nav
-                className={`absolute bottom-0 left-0 right-0 backdrop-blur-xl px-4 py-3 flex justify-between items-center z-50 ${isDarkTheme ? "bg-[#050508]/90 border-t border-white/5" : "bg-[#f9f7f3]/95 border-t border-black/10"}`}
+                className={`
+        relative z-50
+        flex flex-none items-center justify-between
+        px-4 pt-3
+        pb-[calc(0.75rem+env(safe-area-inset-bottom))]
+        backdrop-blur-xl
+        ${
+          isDarkTheme
+            ? "border-t border-white/5 bg-[#050508]/95"
+            : "border-t border-black/10 bg-[#f9f7f3]/95"
+        }
+      `}
               >
                 {navItems.map((item) => {
                   const isActive = activeTab === item.id;
+
                   return (
                     <button
                       key={item.id}
+                      type="button"
                       onClick={() => setActiveTab(item.id)}
-                      className={`flex flex-col items-center gap-1 transition-colors duration-200 ${
+                      className={`relative flex min-w-14 flex-col items-center gap-1 transition-colors duration-200 ${
                         isActive
                           ? "text-taylor-red"
                           : "text-gray-500 hover:text-gray-300"
                       }`}
                     >
                       <item.icon size={22} strokeWidth={isActive ? 2.5 : 2} />
-                      <span className="text-[9px] font-medium font-inter tracking-wide">
+
+                      <span className="font-inter text-[9px] font-medium tracking-wide">
                         {item.label}
                       </span>
+
                       {isActive && (
                         <motion.div
                           layoutId="nav-pill"
-                          className="absolute -bottom-1 w-1 h-1 bg-taylor-red rounded-full"
+                          className="absolute -bottom-1 h-1 w-1 rounded-full bg-taylor-red"
                         />
                       )}
                     </button>
