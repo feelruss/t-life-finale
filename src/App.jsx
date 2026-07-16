@@ -258,11 +258,9 @@ export default function App() {
 
         // No Google/Supabase session: show the normal landing page.
         if (!session?.user) {
-          /*
-           * Do not immediately switch to the landing page.
-           * onAuthStateChange(INITIAL_SESSION) will confirm whether
-           * a persisted mobile session exists.
-           */
+          if (isMounted) {
+            setCurrentScreen("landing");
+          }
           return;
         }
 
@@ -291,23 +289,21 @@ export default function App() {
 
     restoreSession();
 
-    const authLoadingFallback = window.setTimeout(() => {
-      if (isMounted && currentScreenRef.current === "auth-loading") {
-        setCurrentScreen("landing");
-      }
-    }, 1500);
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
 
-      console.log("Supabase auth event:", event, {
-        hasSession: Boolean(session),
-        userId: session?.user?.id,
-      });
+      /*
+       * restoreSession() already handles the initial session.
+       * Ignoring INITIAL_SESSION prevents competing screen changes
+       * while Google OAuth is being restored.
+       */
+      if (event === "INITIAL_SESSION") {
+        return;
+      }
 
-      if (event === "SIGNED_OUT") {
+      if (event === "SIGNED_OUT" || !session?.user) {
         setUserRole("student");
         setDisplayName("Student");
         setCurrentUserKey("guest");
@@ -316,50 +312,14 @@ export default function App() {
         return;
       }
 
-      /*
-       * INITIAL_SESSION is important on mobile browsers.
-       * It may contain the restored session after getSession()
-       * initially returned null.
-       */
-      if (
-        event === "INITIAL_SESSION" ||
-        event === "SIGNED_IN" ||
-        event === "TOKEN_REFRESHED" ||
-        event === "USER_UPDATED"
-      ) {
-        if (!session?.user) {
-          if (currentScreenRef.current === "auth-loading") {
-            setCurrentScreen("landing");
-          }
-
-          return;
+      window.setTimeout(async () => {
+        try {
+          const user = await getCurrentSupabaseUser(session.user);
+          if (isMounted && user) applyAuthenticatedUser(user);
+        } catch (error) {
+          console.error("Failed to refresh authenticated user:", error);
         }
-
-        window.setTimeout(async () => {
-          try {
-            const userProfile = await getCurrentSupabaseUser(session.user);
-
-            if (!isMounted) return;
-
-            if (!userProfile) {
-              console.error(
-                "Supabase session exists, but the public.users profile could not be loaded.",
-              );
-
-              setCurrentScreen("login");
-              return;
-            }
-
-            applyAuthenticatedUser(userProfile);
-          } catch (error) {
-            console.error(`Failed to handle Supabase ${event} event:`, error);
-
-            if (isMounted && currentScreenRef.current === "auth-loading") {
-              setCurrentScreen("login");
-            }
-          }
-        }, 0);
-      }
+      }, 0);
     });
 
     const refreshProfile = async () => {
@@ -414,7 +374,6 @@ export default function App() {
 
     return () => {
       isMounted = false;
-      window.clearTimeout(authLoadingFallback);
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", refreshProfile);
     };
@@ -751,11 +710,11 @@ export default function App() {
               <div className="h-10 w-10 rounded-full border-2 border-white/10 border-t-taylor-red animate-spin" />
 
               <p className="mt-5 text-sm font-medium text-white">
-                Checking your account...
+                Working on it
               </p>
 
               <p className="mt-2 text-xs text-gray-500">
-                Loading your student profile
+                Checking your account...
               </p>
             </motion.div>
           )}
