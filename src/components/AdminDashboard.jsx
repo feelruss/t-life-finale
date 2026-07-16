@@ -1334,7 +1334,16 @@ export default function AdminDashboard({
   return (
     <div className="min-h-screen bg-[#050508] text-white">
       {/* Admin Header */}
-      <div className="sticky top-0 z-50 bg-[#050508]/90 backdrop-blur-xl border-b border-white/5">
+      <div
+        className="
+    sticky top-0 z-50
+    w-full
+    border-b border-white/5
+    bg-[#050508]/95
+    backdrop-blur-xl
+    supports-[backdrop-filter]:bg-[#050508]/85
+  "
+      >
         <div className="max-w-[900px] mx-auto px-5 pt-4 pb-2">
           {/* Top row: close button + title + avatar */}
           <div className="flex items-center justify-between mb-2">
@@ -1345,15 +1354,28 @@ export default function AdminDashboard({
               >
                 <X size={16} className="text-gray-400" />
               </button>
-              <div>
-                <h1 className="text-base font-outfit font-bold text-white">
-                  Admin Dashboard
-                  <span className="text-[9px] font-inter font-medium bg-taylor-red/20 text-taylor-red px-2 py-0.5 rounded-full border border-taylor-red/30 whitespace-nowrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <h1 className="truncate font-outfit text-sm font-bold text-white sm:text-base">
+                    Admin Dashboard
+                  </h1>
+
+                  <span
+                    className="
+        flex-none whitespace-nowrap
+        rounded-full border border-taylor-red/30
+        bg-taylor-red/20
+        px-2 py-0.5
+        font-inter text-[8px] font-medium
+        text-taylor-red
+        sm:text-[9px]
+      "
+                  >
                     {loggedInAdmin.role}
                   </span>
-                </h1>
+                </div>
 
-                <p className="text-[10px] font-inter text-gray-500">
+                <p className="mt-0.5 truncate font-inter text-[10px] text-gray-500">
                   Welcome, {loggedInAdmin.name}
                 </p>
               </div>
@@ -1365,21 +1387,64 @@ export default function AdminDashboard({
         </div>
 
         {/* Section Tabs */}
-        <div className="max-w-[900px] mx-auto px-5 pb-3 flex gap-2">
-          {sections.map((sec) => (
-            <button
-              key={sec.id}
-              onClick={() => setActiveSection(sec.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-outfit font-semibold transition-all duration-300 ${
-                activeSection === sec.id
-                  ? "bg-taylor-red/20 text-taylor-red border border-taylor-red/30"
-                  : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
-              }`}
-            >
-              <sec.icon size={14} />
-              {sec.label}
-            </button>
-          ))}
+        <div className="max-w-[900px] mx-auto pb-3">
+          <div
+            className="
+      flex w-full gap-2
+      overflow-x-auto overflow-y-hidden
+      px-4
+      scroll-smooth
+      snap-x snap-mandatory
+      overscroll-x-contain
+      touch-pan-x
+      hide-scrollbar
+      sm:px-5
+      md:grid md:grid-cols-4 md:overflow-visible
+    "
+          >
+            {sections.map((sec) => {
+              const isActive = activeSection === sec.id;
+
+              return (
+                <button
+                  key={sec.id}
+                  type="button"
+                  onClick={() => setActiveSection(sec.id)}
+                  className={`
+            relative
+            flex min-h-11 min-w-[108px]
+            flex-none snap-start
+            items-center justify-center gap-1.5
+            whitespace-nowrap rounded-xl
+            border px-3 py-2.5
+            font-outfit text-xs font-semibold
+            transition-colors duration-200
+            md:min-w-0 md:w-full
+            ${
+              isActive
+                ? "border-taylor-red/30 bg-taylor-red/20 text-taylor-red"
+                : "border-transparent text-gray-500 hover:bg-white/5 hover:text-gray-300"
+            }
+          `}
+                >
+                  <sec.icon
+                    size={15}
+                    strokeWidth={isActive ? 2.5 : 2}
+                    className="flex-none"
+                  />
+
+                  <span>{sec.label}</span>
+
+                  {isActive && (
+                    <motion.span
+                      layoutId="admin-section-indicator"
+                      className="absolute inset-x-3 -bottom-[1px] h-0.5 rounded-full bg-taylor-red"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
