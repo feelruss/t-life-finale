@@ -1,105 +1,202 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { ArrowRight, Calendar, Users } from 'lucide-react';
+// This is the LandingPage.jsx file
+import React from "react";
+import { motion } from "framer-motion";
+import { ArrowRight, Calendar, Users } from "lucide-react";
 
 const LandingPage = ({ onGetStarted }) => {
-    return (
-        <div className="min-h-screen bg-[#050508] text-white flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
-            {/* Background Gradients */}
-            <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
-                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-taylor-red/20 rounded-full blur-[100px]" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-600/20 rounded-full blur-[100px]" />
-            </div>
+  return (
+    <main
+      className="
+        relative
+        min-h-[100dvh]
+        w-full
+        overflow-x-hidden
+        bg-[#050508]
+        px-4 py-6
+        font-sans text-white
+        sm:px-6 sm:py-8
+      "
+    >
+      {/* Fixed decorative background */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
+      >
+        <div className="absolute left-[-25%] top-[-10%] h-[22rem] w-[22rem] rounded-full bg-taylor-red/20 blur-[100px] sm:left-[-10%] sm:h-[30rem] sm:w-[30rem]" />
 
-            <div className="z-10 max-w-md w-full flex flex-col items-center text-center space-y-8">
-                {/* Logo / Icon */}
-                <motion.div
-                    initial={{ scale: 0, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 20 }}
-                    className="w-24 h-24 bg-gradient-to-br from-taylor-red to-[#8a1525] rounded-3xl flex items-center justify-center shadow-glow-red"
-                >
-                    <span className="text-5xl font-serif font-bold text-white">T</span>
-                </motion.div>
+        <div className="absolute bottom-[-15%] right-[-25%] h-[22rem] w-[22rem] rounded-full bg-blue-600/20 blur-[100px] sm:right-[-10%] sm:h-[30rem] sm:w-[30rem]" />
+      </div>
 
-                <motion.p
-                    initial={{ y: 10, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.12 }}
-                    className="-mt-5 text-2xl font-outfit font-bold tracking-wide text-gray-100"
-                >
-                    T-Life
-                </motion.p>
+      {/* Scrollable page content */}
+      <div
+        className="
+          relative z-10
+          mx-auto
+          flex min-h-[100dvh]
+          w-full max-w-md
+          flex-col items-center
+          pb-8
+          text-center
+          touch-pan-y
+        "
+      >
+        {/* Logo / Icon */}
+        <motion.div
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{
+            type: "spring",
+            stiffness: 260,
+            damping: 20,
+          }}
+          className="
+            flex h-20 w-20
+            flex-none items-center justify-center
+            rounded-3xl
+            bg-gradient-to-br from-taylor-red to-[#8a1525]
+            shadow-glow-red
+            sm:h-24 sm:w-24
+          "
+        >
+          <span className="font-serif text-4xl font-bold text-white sm:text-5xl">
+            T
+          </span>
+        </motion.div>
 
-                {/* Hero Text */}
-                <div className="space-y-4">
-                    <motion.h1
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.2 }}
-                        className="text-4xl font-bold tracking-tight"
-                    >
-                        Experience Taylor's<br />
-                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-taylor-red to-orange-500">
-                            Like Never Before
-                        </span>
-                    </motion.h1>
-                    <motion.p
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        transition={{ delay: 0.3 }}
-                        className="text-gray-400 text-lg"
-                    >
-                        Your all-in-one companion for campus life. Discover events and clubs that fit your schedule.
-                    </motion.p>
-                </div>
+        <motion.p
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.12 }}
+          className="mt-3 font-outfit text-xl font-bold tracking-wide text-gray-100 sm:text-2xl"
+        >
+          T-Life
+        </motion.p>
 
-                {/* Features Grid */}
-                <motion.div
-                    initial={{ y: 20, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.4 }}
-                    className="grid grid-cols-1 gap-4 w-full"
-                >
-                    <FeatureCard icon={Calendar} title="Events" desc="Get matched with workshops, competitions, and social activities based on your free slots and interests." delay={0.5} />
-                    <FeatureCard icon={Users} title="Clubs & Societies" desc="Explore student communities, view meeting schedules, and join groups that match your goals." delay={0.6} />
-                </motion.div>
+        {/* Hero Text */}
+        <section className="mt-8 space-y-4">
+          <motion.h1
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            className="
+              text-3xl font-bold
+              leading-tight tracking-tight
+              sm:text-4xl
+            "
+          >
+            Experience Taylor&apos;s
+            <br />
+            <span className="bg-gradient-to-r from-taylor-red to-orange-500 bg-clip-text text-transparent">
+              Like Never Before
+            </span>
+          </motion.h1>
 
-                {/* CTA Button */}
-                <motion.button
-                    initial={{ y: 20, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.9 }}
-                    onClick={onGetStarted}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="group relative w-full py-4 bg-white text-black rounded-xl font-bold text-lg flex items-center justify-center gap-2 overflow-hidden"
-                >
-                    <span className="relative z-10 flex items-center gap-2">
-                        Get Started <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                    </span>
-                    <div className="absolute inset-0 bg-gradient-to-r from-gray-200 to-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                </motion.button>
-            </div>
-        </div>
-    );
+          <motion.p
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="text-base leading-7 text-gray-400 sm:text-lg"
+          >
+            Your all-in-one companion for campus life. Discover events and clubs
+            that fit your schedule.
+          </motion.p>
+        </section>
+
+        {/* Features Grid */}
+        <motion.section
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          aria-label="T-Life features"
+          className="mt-8 grid w-full grid-cols-1 gap-4"
+        >
+          <FeatureCard
+            icon={Calendar}
+            title="Events"
+            desc="Get matched with workshops, competitions, and social activities based on your free slots and interests."
+            delay={0.5}
+          />
+
+          <FeatureCard
+            icon={Users}
+            title="Clubs & Societies"
+            desc="Explore student communities, view meeting schedules, and join groups that match your goals."
+            delay={0.6}
+          />
+        </motion.section>
+
+        {/* CTA Button */}
+        <motion.button
+          type="button"
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.9 }}
+          onClick={onGetStarted}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          className="
+            group relative
+            mt-8 flex min-h-14 w-full
+            items-center justify-center gap-2
+            overflow-hidden rounded-xl
+            bg-white px-6 py-4
+            text-lg font-bold text-black
+            focus:outline-none
+            focus-visible:ring-2
+            focus-visible:ring-white
+            focus-visible:ring-offset-2
+            focus-visible:ring-offset-[#050508]
+          "
+        >
+          <span className="relative z-10 flex items-center gap-2">
+            Get Started
+            <ArrowRight
+              size={20}
+              className="transition-transform group-hover:translate-x-1"
+            />
+          </span>
+
+          <span className="absolute inset-0 bg-gradient-to-r from-gray-200 to-white opacity-0 transition-opacity group-hover:opacity-100" />
+        </motion.button>
+      </div>
+    </main>
+  );
 };
 
 const FeatureCard = ({ icon: Icon, title, desc, delay }) => (
-    <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay }}
-        className="bg-white/5 border border-white/10 p-5 rounded-2xl flex items-start gap-4 hover:bg-white/10 transition-colors"
+  <motion.article
+    initial={{ scale: 0.9, opacity: 0 }}
+    animate={{ scale: 1, opacity: 1 }}
+    transition={{ delay }}
+    className="
+      flex items-start gap-4
+      rounded-2xl
+      border border-white/10
+      bg-white/5
+      p-4
+      transition-colors
+      hover:bg-white/10
+      sm:p-5
+    "
+  >
+    <div
+      className="
+        flex h-11 w-11
+        flex-none items-center justify-center
+        rounded-xl
+        border border-taylor-red/30
+        bg-taylor-red/10
+      "
     >
-        <div className="w-11 h-11 rounded-xl bg-taylor-red/10 border border-taylor-red/30 flex items-center justify-center flex-shrink-0">
-            <Icon className="text-taylor-red" size={22} />
-        </div>
-        <div className="text-left">
-            <h3 className="font-bold text-white text-base mb-1">{title}</h3>
-            <p className="text-sm text-gray-400 leading-relaxed">{desc}</p>
-        </div>
-    </motion.div>
+      <Icon className="text-taylor-red" size={22} aria-hidden="true" />
+    </div>
+
+    <div className="min-w-0 text-left">
+      <h2 className="mb-1 text-base font-bold text-white">{title}</h2>
+
+      <p className="text-sm leading-relaxed text-gray-400">{desc}</p>
+    </div>
+  </motion.article>
 );
 
 export default LandingPage;
