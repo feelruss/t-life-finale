@@ -258,9 +258,11 @@ export default function App() {
 
         // No Google/Supabase session: show the normal landing page.
         if (!session?.user) {
-          if (isMounted) {
-            setCurrentScreen("landing");
-          }
+          /*
+           * Do not immediately switch to the landing page.
+           * onAuthStateChange(INITIAL_SESSION) will confirm whether
+           * a persisted mobile session exists.
+           */
           return;
         }
 
@@ -289,21 +291,23 @@ export default function App() {
 
     restoreSession();
 
+    const authLoadingFallback = window.setTimeout(() => {
+      if (isMounted && currentScreenRef.current === "auth-loading") {
+        setCurrentScreen("landing");
+      }
+    }, 1500);
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
 
-      /*
-       * restoreSession() already handles the initial session.
-       * Ignoring INITIAL_SESSION prevents competing screen changes
-       * while Google OAuth is being restored.
-       */
-      if (event === "INITIAL_SESSION") {
-        return;
-      }
+      console.log("Supabase auth event:", event, {
+        hasSession: Boolean(session),
+        userId: session?.user?.id,
+      });
 
-      if (event === "SIGNED_OUT" || !session?.user) {
+      if (event === "SIGNED_OUT") {
         setUserRole("student");
         setDisplayName("Student");
         setCurrentUserKey("guest");
@@ -312,14 +316,50 @@ export default function App() {
         return;
       }
 
-      window.setTimeout(async () => {
-        try {
-          const user = await getCurrentSupabaseUser(session.user);
-          if (isMounted && user) applyAuthenticatedUser(user);
-        } catch (error) {
-          console.error("Failed to refresh authenticated user:", error);
+      /*
+       * INITIAL_SESSION is important on mobile browsers.
+       * It may contain the restored session after getSession()
+       * initially returned null.
+       */
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "USER_UPDATED"
+      ) {
+        if (!session?.user) {
+          if (currentScreenRef.current === "auth-loading") {
+            setCurrentScreen("landing");
+          }
+
+          return;
         }
-      }, 0);
+
+        window.setTimeout(async () => {
+          try {
+            const userProfile = await getCurrentSupabaseUser(session.user);
+
+            if (!isMounted) return;
+
+            if (!userProfile) {
+              console.error(
+                "Supabase session exists, but the public.users profile could not be loaded.",
+              );
+
+              setCurrentScreen("login");
+              return;
+            }
+
+            applyAuthenticatedUser(userProfile);
+          } catch (error) {
+            console.error(`Failed to handle Supabase ${event} event:`, error);
+
+            if (isMounted && currentScreenRef.current === "auth-loading") {
+              setCurrentScreen("login");
+            }
+          }
+        }, 0);
+      }
     });
 
     const refreshProfile = async () => {
@@ -374,6 +414,7 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      window.clearTimeout(authLoadingFallback);
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", refreshProfile);
     };
@@ -646,6 +687,17 @@ export default function App() {
       });
     }
   };
+
+  const handleTabChange = useCallback((nextTab) => {
+    setActiveTab((currentTab) => {
+      // Prevent unnecessary state updates when tapping the active tab again.
+      if (currentTab === nextTab) {
+        return currentTab;
+      }
+
+      return nextTab;
+    });
+  }, []);
 
   const navItems = [
     { id: "home", icon: Home, label: "Home" },
@@ -1037,7 +1089,10 @@ export default function App() {
       </AnimatePresence>
 
       {/* AI Chatbot */}
-      <Chatbot />
+      {currentScreen === "app" &&
+        !showAdmin &&
+        !showNotifications &&
+        !showEventDetail && <Chatbot />}
     </div>
   );
 }
