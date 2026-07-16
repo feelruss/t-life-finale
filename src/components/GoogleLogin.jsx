@@ -1,57 +1,56 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { createClient } from '@supabase/supabase-js';
+import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { createClient } from "@supabase/supabase-js";
 
-// Initialize Supabase Client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-export const supabase = createClient(supabaseUrl, supabaseKey);
 
-export default function GoogleLogin({ onLogin }) {
-    const [loading, setLoading] = useState(false);
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 
-    const handleGoogleLogin = async () => {
-        setLoading(true);
-        try {
-            // Mocking a fast Google login to save time
-            setTimeout(() => {
-                onLogin({
-                    type: 'student',
-                    user: {
-                        id: 'GOOGLE-STUDENT-001',
-                        name: 'Google Student',
-                        email: 'google.student@sd.taylors.edu.my',
-                    },
-                });
-            }, 500);
-        } catch (error) {
-            console.error('Error logging in with Google:', error.message);
-            alert('Google Login failed: ' + error.message);
-        } finally {
-            // Keep loading true for the 500ms so the button shows loading state briefly,
-            // but we don't need to reset it if unmounted.
-        }
-    };
+export default function GoogleLogin() {
+  const [loading, setLoading] = useState(false);
 
-    return (
-        <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleGoogleLogin}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-100 text-black font-bold py-3 px-4 rounded-xl shadow-md transition-all duration-200"
-        >
-            <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-                <g transform="matrix(1, 0, 0, 1, 27.009001, -39.238998)">
-                    <path fill="#4285F4" d="M -3.264 51.509 C -3.264 50.719 -3.334 49.969 -3.454 49.239 L -14.754 49.239 L -14.754 53.749 L -8.284 53.749 C -8.574 55.229 -9.424 56.479 -10.684 57.329 L -10.684 60.329 L -6.824 60.329 C -4.564 58.239 -3.264 55.159 -3.264 51.509 Z" />
-                    <path fill="#34A853" d="M -14.754 63.239 C -11.514 63.239 -8.804 62.159 -6.824 60.329 L -10.684 57.329 C -11.764 58.049 -13.134 58.489 -14.754 58.489 C -17.884 58.489 -20.534 56.379 -21.484 53.529 L -25.464 53.529 L -25.464 56.619 C -23.494 60.539 -19.444 63.239 -14.754 63.239 Z" />
-                    <path fill="#FBBC05" d="M -21.484 53.529 C -21.734 52.809 -21.864 52.039 -21.864 51.239 C -21.864 50.439 -21.724 49.669 -21.484 48.949 L -21.484 45.859 L -25.464 45.859 C -26.284 47.479 -26.754 49.299 -26.754 51.239 C -26.754 53.179 -26.284 54.999 -25.464 56.619 L -21.484 53.529 Z" />
-                    <path fill="#EA4335" d="M -14.754 43.989 C -12.984 43.989 -11.404 44.599 -10.154 45.789 L -6.734 42.369 C -8.804 40.429 -11.514 39.239 -14.754 39.239 C -19.444 39.239 -23.494 41.939 -25.464 45.859 L -21.484 48.949 C -20.534 46.099 -17.884 43.989 -14.754 43.989 Z" />
-                </g>
-            </svg>
-            <span className="text-sm">
-                {loading ? 'Connecting to Google...' : 'Sign in with Google'}
-            </span>
-        </motion.button>
-    );
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      console.error("Google login failed:", error);
+      alert(error.message || "Google login failed.");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.button
+      type="button"
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={handleGoogleLogin}
+      disabled={loading}
+      className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-100 text-black font-bold py-3 px-4 rounded-xl shadow-md transition-all duration-200 disabled:opacity-60"
+    >
+      <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#4285F4" d="M21.35 12.22c0-.71-.06-1.4-.18-2.05H12v3.87h5.24a4.48 4.48 0 0 1-1.94 2.94v2.51h3.14c1.84-1.69 2.91-4.19 2.91-7.27Z" />
+        <path fill="#34A853" d="M12 21.75c2.62 0 4.82-.87 6.43-2.36l-3.14-2.51c-.87.58-1.99.93-3.29.93-2.53 0-4.68-1.71-5.45-4.01H3.31v2.59A9.72 9.72 0 0 0 12 21.75Z" />
+        <path fill="#FBBC05" d="M6.55 13.8A5.84 5.84 0 0 1 6.25 12c0-.63.11-1.24.3-1.8V7.61H3.31A9.75 9.75 0 0 0 2.25 12c0 1.57.38 3.05 1.06 4.39l3.24-2.59Z" />
+        <path fill="#EA4335" d="M12 6.19c1.43 0 2.72.49 3.73 1.45l2.79-2.79A9.35 9.35 0 0 0 12 2.25a9.72 9.72 0 0 0-8.69 5.36l3.24 2.59C7.32 7.9 9.47 6.19 12 6.19Z" />
+      </svg>
+      <span className="text-sm">
+        {loading ? "Connecting to Google..." : "Sign in with Google"}
+      </span>
+    </motion.button>
+  );
 }
