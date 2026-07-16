@@ -246,6 +246,15 @@ export default function App() {
     let isMounted = true;
 
     const restoreSession = async () => {
+      const manuallyLoggedOut = localStorage.getItem(MANUAL_LOGOUT_KEY) === "1";
+
+      if (manuallyLoggedOut) {
+        if (isMounted) {
+          setCurrentScreen("landing");
+        }
+        return;
+      }
+
       try {
         const {
           data: { session },
@@ -308,7 +317,9 @@ export default function App() {
         setDisplayName("Student");
         setCurrentUserKey("guest");
         setAiMeter(loadMeterForUser("guest"));
-        setCurrentScreen("landing");
+        setCurrentScreen(
+          localStorage.getItem(MANUAL_LOGOUT_KEY) === "1" ? "landing" : "login",
+        );
         return;
       }
 
@@ -560,32 +571,28 @@ export default function App() {
     setShowEventDetail(true);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    // Never block UI navigation on remote auth calls.
+    localStorage.setItem(MANUAL_LOGOUT_KEY, "1");
+    setCurrentScreen("landing");
+    setUserRole("student");
+    setDisplayName("Student");
+    setCurrentUserKey("guest");
+    setAiMeter(loadMeterForUser("guest"));
+    setMode("focus");
     setShowAdmin(false);
+    setActiveTab("home");
+    sessionStorage.setItem("taylors_active_tab", "home");
     setShowNotifications(false);
     setShowEventDetail(false);
     setSelectedEvent(null);
 
-    try {
-      const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        console.warn("Supabase sign-out failed:", error);
-      }
-    } catch (error) {
-      console.warn("Supabase sign-out failed:", error);
-    } finally {
-      localStorage.removeItem(MANUAL_LOGOUT_KEY);
-      sessionStorage.setItem("taylors_active_tab", "home");
-
-      setUserRole("student");
-      setDisplayName("Student");
-      setCurrentUserKey("guest");
-      setAiMeter(loadMeterForUser("guest"));
-      setMode("focus");
-      setActiveTab("home");
-      setCurrentScreen("landing");
-    }
+    Promise.race([
+      supabase.auth.signOut(),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]).catch((error) => {
+      console.warn("Supabase signOut failed:", error);
+    });
   };
 
   const handleRSVP = (event) => {
