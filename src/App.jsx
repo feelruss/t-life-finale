@@ -60,7 +60,6 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'complete-profile' | 'app'
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
-  const currentScreenRef = useRef("auth-loading");
 
   /*
    * Prevent restoreSession(), SIGNED_IN and profile refresh from
@@ -71,7 +70,6 @@ export default function App() {
     promise: null,
   });
 
-  const [currentUserKey, setCurrentUserKey] = useState("guest");
   const [currentUserKey, setCurrentUserKey] = useState("guest");
   const [displayName, setDisplayName] = useState("Student");
   const [currentEmail, setCurrentEmail] = useState("");
