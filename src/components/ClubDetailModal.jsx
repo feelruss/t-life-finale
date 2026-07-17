@@ -1,3 +1,4 @@
+// This is the src/components/ClubDetailModal.jsx file
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Calendar, Clock, MapPin, Repeat, Mail } from 'lucide-react';
 

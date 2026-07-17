@@ -1,3 +1,4 @@
+// This is the src/services/clubService.js
 import { supabase } from "../components/GoogleLogin";
 
 const DEFAULT_CLUB_GRADIENT = "from-slate-600 to-slate-800";

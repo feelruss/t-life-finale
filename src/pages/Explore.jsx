@@ -1,3 +1,4 @@
+// This is the src/pages/Explore.jsx file
 import { useState } from "react";
 import ClubCard from "../components/ClubCard";
 import ClubDetailModal from "../components/ClubDetailModal";

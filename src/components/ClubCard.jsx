@@ -1,3 +1,4 @@
+// This is the src/components/ClubCard.jsx
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Users, Check, Loader2 } from "lucide-react";

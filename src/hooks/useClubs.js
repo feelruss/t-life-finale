@@ -1,3 +1,4 @@
+// This is the src/hooks/useClubs.js
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchActiveClubs,
@@ -120,44 +121,53 @@ export default function useClubs(searchTerm = "") {
   }, []);
 
   const toggleMembership = useCallback(async (clubId, shouldJoin) => {
-    if (shouldJoin) {
-      await joinClub(clubId);
+  if (shouldJoin) {
+    await joinClub(clubId);
 
-      setJoinedClubIds((current) => {
-        const updatedIds = current.includes(clubId)
-          ? current
-          : [...current, clubId];
+    setJoinedClubIds((current) => {
+      const updatedIds = current.includes(clubId)
+        ? current
+        : [...current, clubId];
 
-        cachedJoinedClubIds = updatedIds;
-        return updatedIds;
-      });
-    } else {
-      await leaveClub(clubId);
-
-      setJoinedClubIds((current) => {
-        const updatedIds = current.filter((id) => id !== clubId);
-
-        cachedJoinedClubIds = updatedIds;
-        return updatedIds;
-      });
-    }
-
-    setClubs((current) => {
-      const updatedClubs = current.map((club) =>
-        club.id === clubId
-          ? {
-              ...club,
-              members: shouldJoin
-                ? (club.members || 0) + 1
-                : Math.max((club.members || 0) - 1, 0),
-            }
-          : club,
-      );
-
-      cachedClubs = updatedClubs;
-      return updatedClubs;
+      cachedJoinedClubIds = updatedIds;
+      return updatedIds;
     });
-  }, []);
+  } else {
+    await leaveClub(clubId);
+
+    setJoinedClubIds((current) => {
+      const updatedIds = current.filter((id) => id !== clubId);
+
+      cachedJoinedClubIds = updatedIds;
+      return updatedIds;
+    });
+  }
+
+  setClubs((current) => {
+    const updatedClubs = current.map((club) =>
+      club.id === clubId
+        ? {
+            ...club,
+            members: shouldJoin
+              ? (club.members || 0) + 1
+              : Math.max((club.members || 0) - 1, 0),
+          }
+        : club,
+    );
+
+    cachedClubs = updatedClubs;
+    return updatedClubs;
+  });
+
+  window.dispatchEvent(
+    new CustomEvent("taylors-club-membership-updated", {
+      detail: {
+        clubId,
+        joined: shouldJoin,
+      },
+    }),
+  );
+}, []);
 
   const filteredClubs = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
