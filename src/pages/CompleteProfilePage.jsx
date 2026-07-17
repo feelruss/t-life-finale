@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { BookOpen, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { completeGoogleUserProfile } from "../libs/auth";
 
 const PROGRAMMES = [
@@ -46,22 +46,40 @@ export default function CompleteProfilePage({ user, onCompleted }) {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: "-100%" }}
     >
-      <div className="mt-10 mb-8">
-        <div className="w-14 h-14 rounded-2xl bg-taylor-red/15 border border-taylor-red/30 flex items-center justify-center mb-5">
-          <BookOpen className="text-taylor-red-light" size={26} />
-        </div>
+      <div className="mt-10 mb-8 flex flex-col items-center text-center">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.45 }}
+          className="w-20 h-20 mb-6 bg-gradient-to-br from-taylor-red to-[#8a1525] rounded-3xl flex items-center justify-center shadow-glow-red"
+        >
+          <span className="text-4xl font-serif font-bold text-white">T</span>
+        </motion.div>
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-taylor-red-light mb-2">
           One last step
         </p>
-        <h1 className="text-3xl font-bold text-white mb-3">Complete your profile</h1>
-        <p className="text-sm leading-6 text-gray-400">
-          Welcome, {user?.full_name || "Student"}. Select your programme so we can personalize your campus events.
+        <h1 className="text-3xl font-bold text-white mb-3">
+          Complete Your Profile
+        </h1>
+        <p className="max-w-sm text-sm leading-6 text-gray-400">
+          Welcome,
+          <span className="text-white font-semibold">
+            {" "}
+            {user?.full_name || "Student"}
+          </span>
+          .
+          <br />
+          Select your programme so we can personalize your campus events and
+          recommendations.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label htmlFor="programme" className="block text-sm font-medium text-gray-200 mb-2">
+          <label
+            htmlFor="programme"
+            className="block text-sm font-medium text-gray-200 mb-2"
+          >
             Programme
           </label>
           <select
@@ -71,7 +89,9 @@ export default function CompleteProfilePage({ user, onCompleted }) {
             className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 text-sm text-white outline-none focus:border-taylor-red"
             required
           >
-            <option value="" className="bg-[#111116]">Select your programme</option>
+            <option value="" className="bg-[#111116]">
+              Select your programme
+            </option>
             {PROGRAMMES.map((item) => (
               <option key={item} value={item} className="bg-[#111116]">
                 {item}

@@ -1,3 +1,4 @@
+// This is the src/components/GoogleLogin.jsx
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { createClient } from "@supabase/supabase-js";

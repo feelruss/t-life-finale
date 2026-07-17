@@ -60,6 +60,18 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'complete-profile' | 'app'
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
+  const currentScreenRef = useRef("auth-loading");
+
+  /*
+   * Prevent restoreSession(), SIGNED_IN and profile refresh from
+   * loading or creating the same public.users profile simultaneously.
+   */
+  const authProfileRequestRef = useRef({
+    userId: null,
+    promise: null,
+  });
+
+  const [currentUserKey, setCurrentUserKey] = useState("guest");
   const [currentUserKey, setCurrentUserKey] = useState("guest");
   const [displayName, setDisplayName] = useState("Student");
   const [currentEmail, setCurrentEmail] = useState("");
@@ -132,6 +144,46 @@ export default function App() {
     };
   };
 
+  const loadAuthenticatedProfile = useCallback(async (authUser) => {
+    const userId = String(authUser?.id || "").trim();
+
+    if (!userId) {
+      return null;
+    }
+
+    const activeRequest = authProfileRequestRef.current;
+
+    /*
+     * A profile request for this user is already running.
+     * Reuse it instead of starting another SELECT/INSERT sequence.
+     */
+    if (activeRequest.userId === userId && activeRequest.promise) {
+      return activeRequest.promise;
+    }
+
+    const profilePromise = getCurrentSupabaseUser(authUser);
+
+    authProfileRequestRef.current = {
+      userId,
+      promise: profilePromise,
+    };
+
+    try {
+      return await profilePromise;
+    } finally {
+      /*
+       * Only clear the ref if it still belongs to this exact request.
+       * A newer request must not be accidentally cleared.
+       */
+      if (authProfileRequestRef.current.promise === profilePromise) {
+        authProfileRequestRef.current = {
+          userId: null,
+          promise: null,
+        };
+      }
+    }
+  }, []);
+
   const applyAuthenticatedUser = useCallback((user, options = {}) => {
     const { resetTab = false } = options;
 
@@ -201,7 +253,7 @@ export default function App() {
         }
 
         // Keep displaying auth-loading while the public.users row is loaded.
-        const userProfile = await getCurrentSupabaseUser(session.user);
+        const userProfile = await loadAuthenticatedProfile(session.user);
 
         if (!isMounted) return;
 
@@ -240,6 +292,10 @@ export default function App() {
       }
 
       if (event === "SIGNED_OUT" || !session?.user) {
+        authProfileRequestRef.current = {
+          userId: null,
+          promise: null,
+        };
         setUserRole("student");
         setDisplayName("Student");
         setCurrentEmail("");
@@ -249,11 +305,17 @@ export default function App() {
         setCurrentScreen("landing");
         return;
       }
+      if (event !== "SIGNED_IN" && event !== "USER_UPDATED") {
+        return;
+      }
 
       window.setTimeout(async () => {
         try {
-          const user = await getCurrentSupabaseUser(session.user);
-          if (isMounted && user) applyAuthenticatedUser(user);
+          const user = await loadAuthenticatedProfile(session.user);
+
+          if (isMounted && user) {
+            applyAuthenticatedUser(user);
+          }
         } catch (error) {
           console.error("Failed to refresh authenticated user:", error);
         }
@@ -289,7 +351,7 @@ export default function App() {
           return;
         }
 
-        const user = await getCurrentSupabaseUser(session.user);
+        const user = await loadAuthenticatedProfile(session.user);
 
         if (isMounted && user) {
           applyAuthenticatedUser(user);
@@ -315,7 +377,7 @@ export default function App() {
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", refreshProfile);
     };
-  }, [applyAuthenticatedUser]);
+  }, [applyAuthenticatedUser, loadAuthenticatedProfile]);
 
   useEffect(() => {
     setTimetableProfile(getUserTimetableProfile(currentUserKey));
@@ -499,6 +561,11 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    authProfileRequestRef.current = {
+      userId: null,
+      promise: null,
+    };
+
     setShowAdmin(false);
     setShowNotifications(false);
     setShowEventDetail(false);
