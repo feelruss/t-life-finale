@@ -817,6 +817,19 @@ export default function AdminDashboard({
   const attendanceRate =
     totalCapacity > 0 ? Math.round((totalRSVPs / totalCapacity) * 100) : 0;
 
+  // Live average match score from campus_events (falls back to mock only if none)
+  const matchScoreValues = adminEvents
+    .map((event) => Number(String(event.match_score ?? "").replace("%", "")))
+    .filter((score) => Number.isFinite(score) && score > 0);
+  const avgMatchScore =
+    matchScoreValues.length > 0
+      ? Math.round(
+          (matchScoreValues.reduce((sum, score) => sum + score, 0) /
+            matchScoreValues.length) *
+            10,
+        ) / 10
+      : analytics.overview.avgMatchScore;
+
   // New: Sort events by registered count to get top events
   const topEvents = [...adminEvents]
     .sort(
@@ -1492,7 +1505,7 @@ export default function AdminDashboard({
                 <StatCard
                   icon={TrendingUp}
                   label="Avg Match Score"
-                  value={`${analytics.overview.avgMatchScore}%`}
+                  value={`${avgMatchScore}%`}
                   // change="+2.3%"
                   // changeType="up"
                   color="#8B5CF6"

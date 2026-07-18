@@ -115,6 +115,75 @@ body {
   animation: shimmer 3s ease-in-out infinite;
 }
 
+/* Landing “TV ad” reel: soft scan + light sweep */
+@keyframes landing-ad-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.landing-ad-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.16) 50%,
+    transparent 65%
+  );
+  animation: landing-ad-sweep 3.6s ease-in-out infinite;
+}
+
+.landing-ad-scanline {
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(255, 255, 255, 0.035) 2px,
+    rgba(255, 255, 255, 0.035) 3px
+  );
+}
+
+@keyframes float-module {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.float-module {
+  animation: float-module 3.4s ease-in-out infinite;
+}
+
+/* Today's Schedule — continuous TV news crawl */
+@keyframes schedule-ticker {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.schedule-ticker-track {
+  animation: schedule-ticker var(--ticker-duration, 28s) linear infinite;
+  will-change: transform;
+}
+
+.schedule-ticker-track.is-paused {
+  animation-play-state: paused;
+}
+
 /* Light mode reinforcement: make panels and sections visibly separated with borders. */
 .theme-light .glass {
   background: rgba(255, 255, 255, 0.82);
