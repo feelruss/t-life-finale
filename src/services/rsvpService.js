@@ -1,5 +1,22 @@
 import { supabase } from "../components/GoogleLogin";
+import { addUserActivity } from "../data/db";
+import { createStudentActivity } from "./studentActivityService";
 
+
+
+async function getEventTitle(eventId, fallback = "Campus event") {
+  const { data, error } = await supabase
+    .from("campus_events")
+    .select("title")
+    .eq("id", String(eventId))
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Unable to load event title for activity history:", error);
+  }
+
+  return data?.title || fallback;
+}
 
 /**
  * Notifies React components that RSVP information has changed.
@@ -88,7 +105,7 @@ export async function getUpcomingRSVPEvents(studentId) {
  *
  * Upsert allows a previously cancelled RSVP to become registered again.
  */
-export async function registerForEvent({ studentId, eventId }) {
+export async function registerForEvent({ studentId, eventId, eventTitle }) {
   if (!studentId) {
     throw new Error("You must be logged in before registering.");
   }
@@ -121,10 +138,31 @@ export async function registerForEvent({ studentId, eventId }) {
     throw new Error(error.message || "Unable to register for this event.");
   }
 
+  const resolvedTitle = await getEventTitle(eventId, eventTitle);
+
+  const activity = {
+    userKey: studentId,
+    type: "rsvp",
+    title: `RSVP confirmed: ${resolvedTitle}`,
+    detail: "Event added to your upcoming schedule.",
+  };
+
+  addUserActivity(activity);
+  await createStudentActivity({
+    studentId,
+    type: activity.type,
+    title: activity.title,
+    detail: activity.detail,
+    entityType: "event",
+    entityId: eventId,
+    metadata: { eventTitle: resolvedTitle },
+  });
+
   dispatchRSVPUpdate({
     action: "registered",
     studentId,
     eventId: String(eventId),
+    eventTitle: resolvedTitle,
   });
 
   return data;
@@ -133,7 +171,7 @@ export async function registerForEvent({ studentId, eventId }) {
 /**
  * Cancel an RSVP without deleting its history.
  */
-export async function cancelEventRSVP({ studentId, eventId }) {
+export async function cancelEventRSVP({ studentId, eventId, eventTitle }) {
   if (!studentId || !eventId) {
     throw new Error("Student ID and event ID are required.");
   }
@@ -154,10 +192,31 @@ export async function cancelEventRSVP({ studentId, eventId }) {
     throw new Error(error.message || "Unable to cancel this RSVP.");
   }
 
+  const resolvedTitle = await getEventTitle(eventId, eventTitle);
+
+  const activity = {
+    userKey: studentId,
+    type: "rsvp-remove",
+    title: `RSVP cancelled: ${resolvedTitle}`,
+    detail: "Event removed from your upcoming schedule.",
+  };
+
+  addUserActivity(activity);
+  await createStudentActivity({
+    studentId,
+    type: activity.type,
+    title: activity.title,
+    detail: activity.detail,
+    entityType: "event",
+    entityId: eventId,
+    metadata: { eventTitle: resolvedTitle },
+  });
+
   dispatchRSVPUpdate({
     action: "cancelled",
     studentId,
     eventId: String(eventId),
+    eventTitle: resolvedTitle,
   });
 
   return data;

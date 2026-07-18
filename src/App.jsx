@@ -42,6 +42,13 @@ import CompleteProfilePage from "./pages/CompleteProfilePage";
 import Chatbot from "./components/Chatbot";
 import { supabase } from "./components/GoogleLogin";
 import { getCurrentSupabaseUser } from "./libs/auth";
+import { createStudentActivity } from "./services/studentActivityService";
+
+const saveStudentActivity = (activity) => {
+  createStudentActivity(activity).catch((error) => {
+    console.error("Unable to save student activity to Supabase:", error);
+  });
+};
 
 export default function App() {
   const MANUAL_LOGOUT_KEY = "taylors_manual_logout";
@@ -468,11 +475,21 @@ export default function App() {
         direction: "in",
       });
       setAiMeter(nextMeter);
-      addUserActivity({
+      const activity = {
         userKey: currentUserKey,
         type: "checkin",
         title: `Checked in: ${event.title}`,
         detail: `+50 points • Focus ${nextMeter.focusScore}% • Wellness ${nextMeter.balanceScore}%`,
+      };
+      addUserActivity(activity);
+      saveStudentActivity({
+        studentId: currentUserKey,
+        type: activity.type,
+        title: activity.title,
+        detail: activity.detail,
+        entityType: "event",
+        entityId: event.id,
+        metadata: { eventTitle: event.title },
       });
       addNotification({
         userKey: currentUserKey,
@@ -500,11 +517,21 @@ export default function App() {
         direction: "out",
       });
       setAiMeter(nextMeter);
-      addUserActivity({
+      const activity = {
         userKey: currentUserKey,
         type: "uncheckin",
         title: `Unchecked: ${event.title}`,
         detail: `-50 points • Focus ${nextMeter.focusScore}% • Wellness ${nextMeter.balanceScore}%`,
+      };
+      addUserActivity(activity);
+      saveStudentActivity({
+        studentId: currentUserKey,
+        type: activity.type,
+        title: activity.title,
+        detail: activity.detail,
+        entityType: "event",
+        entityId: event.id,
+        metadata: { eventTitle: event.title },
       });
       addNotification({
         userKey: currentUserKey,
@@ -615,11 +642,21 @@ export default function App() {
     });
 
     if (result.status === "added") {
-      addUserActivity({
+      const activity = {
         userKey: currentUserKey,
         type: "rsvp",
         title: `RSVP confirmed: ${event.title}`,
         detail: `${event.date || "Date TBC"} • ${event.time || "Time TBC"}`,
+      };
+      addUserActivity(activity);
+      saveStudentActivity({
+        studentId: currentUserKey,
+        type: activity.type,
+        title: activity.title,
+        detail: activity.detail,
+        entityType: "event",
+        entityId: canonicalId,
+        metadata: { eventTitle: event.title },
       });
       addNotification({
         userKey: currentUserKey,
@@ -632,11 +669,21 @@ export default function App() {
         eventId: canonicalId,
       });
     } else if (result.status === "removed") {
-      addUserActivity({
+      const activity = {
         userKey: currentUserKey,
         type: "rsvp-remove",
         title: `RSVP removed: ${event.title}`,
         detail: "You removed this event from your upcoming list.",
+      };
+      addUserActivity(activity);
+      saveStudentActivity({
+        studentId: currentUserKey,
+        type: activity.type,
+        title: activity.title,
+        detail: activity.detail,
+        entityType: "event",
+        entityId: canonicalId,
+        metadata: { eventTitle: event.title },
       });
       addNotification({
         userKey: currentUserKey,

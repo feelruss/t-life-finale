@@ -1,8 +1,32 @@
 // This is the src/services/clubService.js
 import { supabase } from "../components/GoogleLogin";
+import { addUserActivity } from "../data/db";
+import { createStudentActivity } from "./studentActivityService";
 
 const DEFAULT_CLUB_GRADIENT = "from-slate-600 to-slate-800";
 const DEFAULT_CLUB_LOGO = "🏫";
+
+function dispatchClubMembershipUpdate(detail = {}) {
+  if (typeof window === "undefined") return;
+
+  window.dispatchEvent(
+    new CustomEvent("taylors-club-membership-updated", { detail }),
+  );
+}
+
+async function getClubName(clubId) {
+  const { data, error } = await supabase
+    .from("clubs")
+    .select("name")
+    .eq("id", clubId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Unable to load club name for activity history:", error);
+  }
+
+  return data?.name || "Club";
+}
 
 function mapClubEvent(event) {
   return {
@@ -22,7 +46,7 @@ function mapClub(club) {
     description: club.description || "",
     logo: club.logo || DEFAULT_CLUB_LOGO,
     bg: club.background_gradient || DEFAULT_CLUB_GRADIENT,
-    members: club.member_count || 0,
+    members: Number(club.member_count ?? 0),
     meetingDay: club.meeting_day,
     meetingTime: club.meeting_time,
     meetingLocation: club.meeting_location,
@@ -37,7 +61,8 @@ function mapClub(club) {
 export async function fetchActiveClubs() {
   const { data, error } = await supabase
     .from("clubs")
-    .select(`
+    .select(
+      `
       id,
       name,
       category,
@@ -58,7 +83,8 @@ export async function fetchActiveClubs() {
         event_time,
         location
       )
-    `)
+    `,
+    )
     .eq("is_active", true)
     .order("name", { ascending: true });
 
@@ -97,22 +123,56 @@ async function requireCurrentUser() {
 
 export async function joinClub(clubId) {
   const user = await requireCurrentUser();
-  const { error } = await supabase.from("club_members").insert({
-    club_id: clubId,
-    student_id: user.id,
+
+  if (!user?.id) {
+    throw new Error("You must be logged in to join a club.");
+  }
+
+  const numericClubId = Number(clubId);
+
+  if (!Number.isFinite(numericClubId)) {
+    throw new Error("Invalid club ID.");
+  }
+
+  const { data, error } = await supabase.rpc("join_club_with_count", {
+    target_club_id: numericClubId,
   });
 
-  // PostgreSQL unique violation means the student is already joined.
-  if (error && error.code !== "23505") throw error;
+  if (error) {
+    throw new Error(error.message || "Unable to join this club.");
+  }
+
+  return {
+    clubId: numericClubId,
+    joined: true,
+    memberCount: Number(data ?? 0),
+  };
 }
 
 export async function leaveClub(clubId) {
   const user = await requireCurrentUser();
-  const { error } = await supabase
-    .from("club_members")
-    .delete()
-    .eq("club_id", clubId)
-    .eq("student_id", user.id);
 
-  if (error) throw error;
+  if (!user?.id) {
+    throw new Error("You must be logged in to leave a club.");
+  }
+
+  const numericClubId = Number(clubId);
+
+  if (!Number.isFinite(numericClubId)) {
+    throw new Error("Invalid club ID.");
+  }
+
+  const { data, error } = await supabase.rpc("leave_club_with_count", {
+    target_club_id: numericClubId,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Unable to leave this club.");
+  }
+
+  return {
+    clubId: numericClubId,
+    joined: false,
+    memberCount: Number(data ?? 0),
+  };
 }

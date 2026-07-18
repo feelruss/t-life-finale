@@ -16,10 +16,7 @@ async function fetchClubData() {
     return clubsRequest;
   }
 
-  clubsRequest = Promise.all([
-    fetchActiveClubs(),
-    fetchCurrentStudentClubIds(),
-  ])
+  clubsRequest = Promise.all([fetchActiveClubs(), fetchCurrentStudentClubIds()])
     .then(([clubRows, membershipIds]) => {
       cachedClubs = clubRows;
       cachedJoinedClubIds = membershipIds;
@@ -69,9 +66,7 @@ export default function useClubs(searchTerm = "") {
     } catch (loadError) {
       console.error("Failed to load clubs:", loadError);
 
-      setError(
-        loadError.message || "Unable to load clubs from Supabase.",
-      );
+      setError(loadError.message || "Unable to load clubs from Supabase.");
     } finally {
       setLoading(false);
     }
@@ -103,9 +98,7 @@ export default function useClubs(searchTerm = "") {
 
         console.error("Failed to load clubs:", loadError);
 
-        setError(
-          loadError.message || "Unable to load clubs from Supabase.",
-        );
+        setError(loadError.message || "Unable to load clubs from Supabase.");
       } finally {
         if (isActive) {
           setLoading(false);
@@ -121,53 +114,78 @@ export default function useClubs(searchTerm = "") {
   }, []);
 
   const toggleMembership = useCallback(async (clubId, shouldJoin) => {
-  if (shouldJoin) {
-    await joinClub(clubId);
+    const numericClubId = Number(clubId);
 
-    setJoinedClubIds((current) => {
-      const updatedIds = current.includes(clubId)
-        ? current
-        : [...current, clubId];
+    try {
+      const result = shouldJoin
+        ? await joinClub(numericClubId)
+        : await leaveClub(numericClubId);
 
-      cachedJoinedClubIds = updatedIds;
-      return updatedIds;
-    });
-  } else {
-    await leaveClub(clubId);
+      setJoinedClubIds((currentIds) => {
+        const normalizedIds = currentIds.map(Number);
 
-    setJoinedClubIds((current) => {
-      const updatedIds = current.filter((id) => id !== clubId);
+        if (shouldJoin) {
+          return normalizedIds.includes(numericClubId)
+            ? normalizedIds
+            : [...normalizedIds, numericClubId];
+        }
 
-      cachedJoinedClubIds = updatedIds;
-      return updatedIds;
-    });
-  }
+        return normalizedIds.filter((id) => id !== numericClubId);
+      });
 
-  setClubs((current) => {
-    const updatedClubs = current.map((club) =>
-      club.id === clubId
-        ? {
-            ...club,
-            members: shouldJoin
-              ? (club.members || 0) + 1
-              : Math.max((club.members || 0) - 1, 0),
-          }
-        : club,
-    );
+      setClubs((currentClubs) =>
+        currentClubs.map((club) =>
+          Number(club.id) === numericClubId
+            ? {
+                ...club,
+                members: result.memberCount,
+                member_count: result.memberCount,
+              }
+            : club,
+        ),
+      );
 
-    cachedClubs = updatedClubs;
-    return updatedClubs;
-  });
+      /*
+       * Keep module-level cache synchronized when changing tabs.
+       */
+      if (Array.isArray(cachedClubs)) {
+        cachedClubs = cachedClubs.map((club) =>
+          Number(club.id) === numericClubId
+            ? {
+                ...club,
+                members: result.memberCount,
+                member_count: result.memberCount,
+              }
+            : club,
+        );
+      }
 
-  window.dispatchEvent(
-    new CustomEvent("taylors-club-membership-updated", {
-      detail: {
-        clubId,
-        joined: shouldJoin,
-      },
-    }),
-  );
-}, []);
+      if (Array.isArray(cachedJoinedClubIds)) {
+        const normalizedCachedIds = cachedJoinedClubIds.map(Number);
+
+        cachedJoinedClubIds = shouldJoin
+          ? normalizedCachedIds.includes(numericClubId)
+            ? normalizedCachedIds
+            : [...normalizedCachedIds, numericClubId]
+          : normalizedCachedIds.filter((id) => id !== numericClubId);
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("taylors-club-membership-updated", {
+          detail: {
+            clubId: numericClubId,
+            joined: shouldJoin,
+            memberCount: result.memberCount,
+          },
+        }),
+      );
+
+      return result;
+    } catch (membershipError) {
+      console.error("Unable to update club membership:", membershipError);
+      throw membershipError;
+    }
+  }, []);
 
   const filteredClubs = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();

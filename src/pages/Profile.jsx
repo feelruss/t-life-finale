@@ -10,6 +10,7 @@ import {
 import { events } from "../data/events";
 import { clubs } from "../data/clubs";
 import { supabase } from "../components/GoogleLogin";
+import { fetchStudentActivity } from "../services/studentActivityService";
 
 const parseDurationHours = (timeRange) => {
   if (!timeRange || !timeRange.includes(" - ")) return 0;
@@ -73,6 +74,29 @@ const getCampusEventDurationHours = (event) => {
   return 1;
 };
 
+const ACTIVITY_ICONS = {
+  checkin: "✅",
+  uncheckin: "↩️",
+  rsvp: "🎟️",
+  "rsvp-remove": "🗑️",
+  "club-join": "🤝",
+  "club-leave": "👋",
+};
+
+const formatActivityTime = (timestamp) => {
+  if (!timestamp) return "";
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+};
+
 export default function Profile({
   mode,
   onLogout,
@@ -90,7 +114,7 @@ export default function Profile({
 
   const [statsLoading, setStatsLoading] = useState(true);
 
-  const [activity, setActivity] = useState(() => getUserActivity(userKey, 5));
+  const [activity, setActivity] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,50 +122,30 @@ export default function Profile({
     const refreshStats = async () => {
       setStatsLoading(true);
 
-      const { count: clubsJoinedCount, error: clubsError } = await supabase
-        .from("club_members")
-        .select("id", {
-          count: "exact",
-          head: true,
-        })
-        .eq("student_id", userKey);
-
-      if (clubsError) {
-        throw clubsError;
-      }
-
       try {
         if (!userKey || userKey === "guest") {
           if (!cancelled) {
             setStats({
-              eventsAttended,
-              focusHours: Math.round(focusHours * 10) / 10,
-              clubsJoined: clubsJoinedCount || 0,
+              eventsAttended: 0,
+              focusHours: 0,
+              clubsJoined: 0,
             });
-
             setActivity([]);
           }
-
           return;
         }
 
-        /*
-         * attendance.event_id has a foreign key to campus_events.id,
-         * so Supabase can load the related campus event.
-         */
         const [attendanceResult, clubsResult] = await Promise.all([
           supabase
             .from("attendance")
-            .select(
-              `
-            id,
-            event_id,
-            student_id,
-            attended_at,
-            attendance_type,
-            campus_events (*)
-          `,
-            )
+            .select(`
+              id,
+              event_id,
+              student_id,
+              attended_at,
+              attendance_type,
+              campus_events!attendance_event_id_fkey (*)
+            `)
             .eq("student_id", userKey),
 
           supabase
@@ -153,28 +157,14 @@ export default function Profile({
             .eq("student_id", userKey),
         ]);
 
-        if (attendanceResult.error) {
-          throw attendanceResult.error;
-        }
-
-        if (clubsResult.error) {
-          throw clubsResult.error;
-        }
+        if (attendanceResult.error) throw attendanceResult.error;
+        if (clubsResult.error) throw clubsResult.error;
 
         const attendanceRows = attendanceResult.data || [];
-
-        /*
-         * The unique constraint on attendance(event_id, student_id)
-         * means every row represents one unique attended event.
-         */
         const eventsAttended = attendanceRows.length;
 
         const totalFocusHours = attendanceRows.reduce(
           (total, attendanceRow) => {
-            /*
-             * Depending on Supabase relationship output, the related row
-             * may be an object or a one-item array.
-             */
             const relatedEvent = Array.isArray(attendanceRow.campus_events)
               ? attendanceRow.campus_events[0]
               : attendanceRow.campus_events;
@@ -184,52 +174,34 @@ export default function Profile({
           0,
         );
 
-        const clubsJoined = clubsResult.count || 0;
+        if (cancelled) return;
+
+        const supabaseActivity = await fetchStudentActivity(userKey, 5);
 
         if (cancelled) return;
 
         setStats({
           eventsAttended,
           focusHours: Math.round(totalFocusHours * 10) / 10,
-          clubsJoined,
+          clubsJoined: clubsResult.count || 0,
         });
-
-        setActivity(getUserActivity(userKey, 5));
-
-        console.log("Profile statistics loaded:", {
-          userKey,
-          eventsAttended,
-          focusHours: totalFocusHours,
-          clubsJoined,
-          attendanceRows,
-        });
+        setActivity(supabaseActivity);
       } catch (error) {
         if (cancelled) return;
 
-        console.error(
-          "Unable to load profile statistics from Supabase:",
-          error,
-        );
+        console.error("Unable to load profile statistics from Supabase:", error);
 
-        /*
-         * Local fallback so the profile remains usable if Supabase
-         * temporarily fails.
-         */
         const localLogs = getEventCheckIns(userKey);
-
         const eventDurationMap = Object.fromEntries(
           events.map((event) => [
             String(event.id),
             parseDurationHours(event.time) || 1,
           ]),
         );
-
         const localFocusHours = localLogs.reduce((total, log) => {
           const eventId = String(log.eventId || "");
-
           return total + (eventDurationMap[eventId] || 1);
         }, 0);
-
         const defaultClubIds = clubs
           .filter((club) => club.isJoined)
           .map((club) => club.id);
@@ -239,67 +211,71 @@ export default function Profile({
           focusHours: Math.round(localFocusHours * 10) / 10,
           clubsJoined: getClubMemberships(defaultClubIds).length,
         });
-
         setActivity(getUserActivity(userKey, 5));
       } finally {
-        if (!cancelled) {
-          setStatsLoading(false);
-        }
+        if (!cancelled) setStatsLoading(false);
+      }
+    };
+
+    const refreshActivityOnly = async () => {
+      if (!userKey || userKey === "guest") {
+        if (!cancelled) setActivity([]);
+        return;
+      }
+
+      try {
+        const supabaseActivity = await fetchStudentActivity(userKey, 5);
+        if (!cancelled) setActivity(supabaseActivity);
+      } catch (activityError) {
+        console.error("Unable to load recent activity from Supabase:", activityError);
+        if (!cancelled) setActivity(getUserActivity(userKey, 5));
       }
     };
 
     const handleDataUpdate = () => {
-      refreshStats();
+      void refreshActivityOnly();
     };
 
     const handleAttendanceUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
-
-      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) {
-        return;
-      }
-
-      refreshStats();
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+      void refreshStats();
     };
 
     const handleClubMembershipUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
-
-      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) {
-        return;
-      }
-
-      refreshStats();
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+      void refreshStats();
     };
 
-    refreshStats();
+    const handleRSVPUpdate = (event) => {
+      const updatedStudentId = event?.detail?.studentId;
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+      void refreshActivityOnly();
+    };
+
+    void refreshStats();
 
     window.addEventListener("taylors-db-updated", handleDataUpdate);
-
-    window.addEventListener(
-      "taylors-attendance-updated",
-      handleAttendanceUpdate,
-    );
-
+    window.addEventListener("taylors-attendance-updated", handleAttendanceUpdate);
     window.addEventListener(
       "taylors-club-membership-updated",
       handleClubMembershipUpdate,
     );
+    window.addEventListener("taylors-rsvp-updated", handleRSVPUpdate);
 
     return () => {
       cancelled = true;
-
       window.removeEventListener("taylors-db-updated", handleDataUpdate);
-
       window.removeEventListener(
         "taylors-attendance-updated",
         handleAttendanceUpdate,
       );
-
       window.removeEventListener(
         "taylors-club-membership-updated",
         handleClubMembershipUpdate,
       );
+      window.removeEventListener("taylors-rsvp-updated", handleRSVPUpdate);
     };
   }, [userKey]);
 
@@ -426,10 +402,29 @@ export default function Profile({
             {activity.map((entry) => (
               <div
                 key={entry.id}
-                className="rounded-lg bg-white/5 border border-white/5 px-3 py-2"
+                className="rounded-lg bg-white/5 border border-white/5 px-3 py-2.5"
               >
-                <p className="text-xs text-white font-medium">{entry.title}</p>
-                <p className="text-[10px] text-gray-400">{entry.detail}</p>
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-0.5 text-sm" aria-hidden="true">
+                    {ACTIVITY_ICONS[entry.type] || "•"}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs text-white font-medium">
+                        {entry.title}
+                      </p>
+                      <span className="shrink-0 text-[9px] text-gray-600">
+                        {formatActivityTime(entry.timestamp)}
+                      </span>
+                    </div>
+                    {entry.detail && (
+                      <p className="mt-0.5 text-[10px] text-gray-400">
+                        {entry.detail}
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
