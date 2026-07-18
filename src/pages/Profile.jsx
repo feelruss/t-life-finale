@@ -142,14 +142,16 @@ export default function Profile({
         const [attendanceResult, clubsResult] = await Promise.all([
           supabase
             .from("attendance")
-            .select(`
+            .select(
+              `
               id,
               event_id,
               student_id,
               attended_at,
               attendance_type,
               campus_events!attendance_event_id_fkey (*)
-            `)
+            `,
+            )
             .eq("student_id", userKey),
 
           supabase
@@ -193,7 +195,10 @@ export default function Profile({
       } catch (error) {
         if (cancelled) return;
 
-        console.error("Unable to load profile statistics from Supabase:", error);
+        console.error(
+          "Unable to load profile statistics from Supabase:",
+          error,
+        );
 
         const localLogs = getEventCheckIns(userKey);
         const eventDurationMap = Object.fromEntries(
@@ -231,7 +236,10 @@ export default function Profile({
         const supabaseActivity = await fetchStudentActivity(userKey, 5);
         if (!cancelled) setActivity(supabaseActivity);
       } catch (activityError) {
-        console.error("Unable to load recent activity from Supabase:", activityError);
+        console.error(
+          "Unable to load recent activity from Supabase:",
+          activityError,
+        );
         if (!cancelled) setActivity(getUserActivity(userKey, 5));
       }
     };
@@ -242,26 +250,38 @@ export default function Profile({
 
     const handleAttendanceUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
-      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey))
+        return;
       void refreshStats();
     };
 
     const handleClubMembershipUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
-      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey))
+        return;
       void refreshStats();
     };
 
-    const handleRSVPUpdate = (event) => {
+    const handleRSVPUpdate = async (event) => {
       const updatedStudentId = event?.detail?.studentId;
-      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
-      void refreshActivityOnly();
+
+      if (updatedStudentId && String(updatedStudentId) !== String(userKey)) {
+        return;
+      }
+
+      /*
+       * The event is dispatched only after the activity row is saved, so this request should immediately receive the latest action.
+       */
+      await refreshActivityOnly();
     };
 
     void refreshStats();
 
     window.addEventListener("taylors-db-updated", handleDataUpdate);
-    window.addEventListener("taylors-attendance-updated", handleAttendanceUpdate);
+    window.addEventListener(
+      "taylors-attendance-updated",
+      handleAttendanceUpdate,
+    );
     window.addEventListener(
       "taylors-club-membership-updated",
       handleClubMembershipUpdate,
@@ -283,12 +303,10 @@ export default function Profile({
     };
   }, [userKey]);
 
-
   const profileInitial = useMemo(
     () => (displayName?.[0] || "S").toUpperCase(),
     [displayName],
   );
-
 
   const handleLogoutClick = () => {
     onLogout?.();
@@ -440,7 +458,6 @@ export default function Profile({
           </p>
         )}
       </div>
-
 
       {/* My Data Section */}
       <div ref={dataRef} className="rounded-2xl p-6 bg-[#0a0506]">

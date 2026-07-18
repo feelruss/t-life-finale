@@ -1,6 +1,5 @@
 // This is the src/services/clubService.js
 import { supabase } from "../libs/supabase";
-import { addUserActivity } from "../data/db";
 import { createStudentActivity } from "./studentActivityService";
 
 const DEFAULT_CLUB_GRADIENT = "from-slate-600 to-slate-800";
@@ -134,6 +133,8 @@ export async function joinClub(clubId) {
     throw new Error("Invalid club ID.");
   }
 
+  const clubName = await getClubName(numericClubId);
+
   const { data, error } = await supabase.rpc("join_club_with_count", {
     target_club_id: numericClubId,
   });
@@ -142,8 +143,23 @@ export async function joinClub(clubId) {
     throw new Error(error.message || "Unable to join this club.");
   }
 
+  await createStudentActivity({
+    studentId: user.id,
+    type: "club-join",
+    title: `Joined club: ${clubName}`,
+    detail: "You joined this club and can now receive its member updates.",
+    entityType: "club",
+    entityId: numericClubId,
+    metadata: {
+      clubName,
+      membershipStatus: "joined",
+    },
+  });
+
   return {
+    studentId: user.id,
     clubId: numericClubId,
+    clubName,
     joined: true,
     memberCount: Number(data ?? 0),
   };
@@ -162,6 +178,8 @@ export async function leaveClub(clubId) {
     throw new Error("Invalid club ID.");
   }
 
+  const clubName = await getClubName(numericClubId);
+
   const { data, error } = await supabase.rpc("leave_club_with_count", {
     target_club_id: numericClubId,
   });
@@ -170,8 +188,23 @@ export async function leaveClub(clubId) {
     throw new Error(error.message || "Unable to leave this club.");
   }
 
+  await createStudentActivity({
+    studentId: user.id,
+    type: "club-leave",
+    title: `Left club: ${clubName}`,
+    detail: "You left this club and will no longer receive its member updates.",
+    entityType: "club",
+    entityId: numericClubId,
+    metadata: {
+      clubName,
+      membershipStatus: "left",
+    },
+  });
+
   return {
+    studentId: user.id,
     clubId: numericClubId,
+    clubName,
     joined: false,
     memberCount: Number(data ?? 0),
   };

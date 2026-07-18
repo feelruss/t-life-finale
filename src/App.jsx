@@ -43,6 +43,11 @@ import {
   fetchTimetableSyncSetting,
   timetableSyncEventName,
 } from "./services/timetableSyncService";
+import {
+  cancelEventRSVP,
+  getStudentRSVP,
+  registerForEvent,
+} from "./services/rsvpService";
 
 const saveStudentActivity = (activity) => {
   createStudentActivity(activity).catch((error) => {
@@ -442,10 +447,7 @@ export default function App() {
       }
     };
 
-    window.addEventListener(
-      timetableSyncEventName,
-      handleTimetableSyncUpdate,
-    );
+    window.addEventListener(timetableSyncEventName, handleTimetableSyncUpdate);
 
     return () => {
       window.removeEventListener(
@@ -642,13 +644,23 @@ export default function App() {
 
   const handleEventClick = (event) => {
     if (!event) return;
-    const canonicalId = String(event.sourceEventId || event.id || "");
+
+    const canonicalId = String(
+      event.sourceEventId || event.sourceId || event.eventId || event.id || "",
+    ).trim();
+
     setSelectedEvent({
       ...event,
-      id: event.id,
-      sourceEventId: canonicalId || event.sourceEventId,
-      isRSVPd: canonicalId ? rsvpEventIds.includes(canonicalId) : false,
+
+      // The modal and Supabase RSVP should use the real campus_events ID.
+      id: canonicalId,
+      sourceEventId: canonicalId,
+
+      isRSVPd:
+        Boolean(event.isRSVPd) ||
+        (canonicalId ? rsvpEventIds.map(String).includes(canonicalId) : false),
     });
+
     setShowEventDetail(true);
   };
 
@@ -695,15 +707,26 @@ export default function App() {
 
   const handleRSVP = (event) => {
     if (!event?.id && !event?.sourceEventId) return;
-    const result = toggleEventRSVP({ event, userKey: currentUserKey });
+
+    const result = toggleEventRSVP({
+      event,
+      userKey: currentUserKey,
+    });
+
     const canonicalId =
       result.eventId || String(event.sourceEventId || event.id || "");
 
     setRsvpEventIds(getUserRSVPEventIds(currentUserKey));
+
     setSelectedEvent((prev) => {
       if (!prev) return prev;
+
       const prevCanonical = String(prev.sourceEventId || prev.id || "");
-      if (prevCanonical !== canonicalId) return prev;
+
+      if (prevCanonical !== canonicalId) {
+        return prev;
+      }
+
       return {
         ...prev,
         isRSVPd: result.status === "added",
@@ -717,7 +740,9 @@ export default function App() {
         title: `RSVP confirmed: ${event.title}`,
         detail: `${event.date || "Date TBC"} • ${event.time || "Time TBC"}`,
       };
+
       addUserActivity(activity);
+
       saveStudentActivity({
         studentId: currentUserKey,
         type: activity.type,
@@ -725,8 +750,11 @@ export default function App() {
         detail: activity.detail,
         entityType: "event",
         entityId: canonicalId,
-        metadata: { eventTitle: event.title },
+        metadata: {
+          eventTitle: event.title,
+        },
       });
+
       addNotification({
         userKey: currentUserKey,
         type: "event-rsvp",
@@ -744,7 +772,9 @@ export default function App() {
         title: `RSVP removed: ${event.title}`,
         detail: "You removed this event from your upcoming list.",
       };
+
       addUserActivity(activity);
+
       saveStudentActivity({
         studentId: currentUserKey,
         type: activity.type,
@@ -752,8 +782,11 @@ export default function App() {
         detail: activity.detail,
         entityType: "event",
         entityId: canonicalId,
-        metadata: { eventTitle: event.title },
+        metadata: {
+          eventTitle: event.title,
+        },
       });
+
       addNotification({
         userKey: currentUserKey,
         type: "event-rsvp-removed",
@@ -765,6 +798,155 @@ export default function App() {
         eventId: canonicalId,
       });
     }
+  };
+
+  // Hangle RSVP Event
+  const handleEventRSVP = async (event) => {
+    const studentId = currentUserKey !== "guest" ? currentUserKey : null;
+
+    const eventId = String(
+      event?.sourceEventId ||
+        event?.sourceId ||
+        event?.eventId ||
+        event?.id ||
+        "",
+    ).trim();
+
+    if (!studentId) {
+      throw new Error("You must be signed in before registering for an event.");
+    }
+
+    if (!eventId) {
+      throw new Error("The event ID is missing.");
+    }
+
+    const existingRSVP = await getStudentRSVP(studentId, eventId);
+
+    const isCurrentlyRegistered =
+      existingRSVP &&
+      ["registered", "waitlisted"].includes(existingRSVP.status) &&
+      !existingRSVP.cancelled_at;
+
+    if (isCurrentlyRegistered) {
+      await cancelEventRSVP({
+        studentId,
+        eventId,
+      });
+
+      /*
+       * Save the RSVP removal in student_activity so the
+       * Profile Recent Changes section can display it.
+       */
+      await createStudentActivity({
+        studentId,
+        type: "rsvp-remove",
+        title: `RSVP removed: ${event.title}`,
+        detail: "You removed this event from your upcoming RSVP list.",
+        entityType: "event",
+        entityId: eventId,
+        metadata: {
+          eventTitle: event.title,
+          eventDate: event.date || null,
+          eventTime: event.time || null,
+          rsvpStatus: "cancelled",
+        },
+      });
+
+      setSelectedEvent((previous) =>
+        previous
+          ? {
+              ...previous,
+              isRSVPd: false,
+              rsvpStatus: "cancelled",
+            }
+          : previous,
+      );
+
+      setRsvpEventIds((previous) =>
+        previous.filter((savedEventId) => String(savedEventId) !== eventId),
+      );
+
+      /*
+       * Dispatch this after both event_rsvps and student_activity have been updated.
+       */
+      window.dispatchEvent(
+        new CustomEvent("taylors-rsvp-updated", {
+          detail: {
+            studentId,
+            eventId,
+            status: "cancelled",
+          },
+        }),
+      );
+
+      return {
+        isRSVPd: false,
+        status: "cancelled",
+      };
+    }
+
+    const savedRSVP = await registerForEvent({
+      studentId,
+      eventId,
+    });
+
+    /*
+     * Save the RSVP registration in student_activity so the Profile Recent Changes section can display it.
+     */
+    await createStudentActivity({
+      studentId,
+      type: "rsvp",
+      title: `RSVP confirmed: ${event.title}`,
+      detail: `${event.date || "Date TBC"} • ${event.time || "Time TBC"}`,
+      entityType: "event",
+      entityId: eventId,
+      metadata: {
+        eventTitle: event.title,
+        eventDate: event.date || null,
+        eventTime: event.time || null,
+        rsvpStatus: savedRSVP.status,
+      },
+    });
+
+    setSelectedEvent((previous) =>
+      previous
+        ? {
+            ...previous,
+            isRSVPd: true,
+            rsvpId: savedRSVP.id,
+            rsvpStatus: savedRSVP.status,
+          }
+        : previous,
+    );
+
+    setRsvpEventIds((previous) => {
+      const normalizedIds = previous.map(String);
+
+      if (normalizedIds.includes(eventId)) {
+        return previous;
+      }
+
+      return [...previous, eventId];
+    });
+
+    /*
+     * Dispatch this after the activity record has been inserted.
+     */
+    window.dispatchEvent(
+      new CustomEvent("taylors-rsvp-updated", {
+        detail: {
+          studentId,
+          eventId,
+          status: savedRSVP.status,
+        },
+      }),
+    );
+
+    return {
+      isRSVPd: true,
+      status: savedRSVP.status,
+      rsvp: savedRSVP,
+    };
   };
 
   const handleTabChange = useCallback((nextTab) => {
@@ -1044,7 +1226,9 @@ export default function App() {
                         programme={currentProgramme}
                         timetableSynced={timetableSyncEnabled}
                         timetableSyncLoading={timetableSyncLoading}
-                        focusMode={currentUserKey.focus_mode || mode || "balance"}
+                        focusMode={
+                          currentUserKey.focus_mode || mode || "balance"
+                        }
                         onEventClick={handleEventClick}
                       />
                     </motion.div>
@@ -1136,10 +1320,13 @@ export default function App() {
         {/* Event Detail Modal */}
         <EventDetailModal
           event={selectedEvent}
-          isOpen={showEventDetail}
-          onClose={() => setShowEventDetail(false)}
+          isOpen={Boolean(selectedEvent)}
+          onClose={() => {
+            setSelectedEvent(null);
+            setShowEventDetail(false);
+          }}
           onCheckIn={handleCheckIn}
-          onRSVP={handleRSVP}
+          onRSVP={handleEventRSVP}
         />
 
         <NotificationCenter

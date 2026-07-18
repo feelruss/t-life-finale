@@ -7,14 +7,8 @@ import useClubs from "../hooks/useClubs";
 export default function Explore() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedClub, setSelectedClub] = useState(null);
-  const {
-    clubs,
-    joinedClubIds,
-    loading,
-    error,
-    reload,
-    toggleMembership,
-  } = useClubs(searchTerm);
+  const { clubs, joinedClubIds, loading, error, reload, toggleMembership } =
+    useClubs(searchTerm);
 
   const openClub = (club) => setSelectedClub(club);
   const closeClub = () => setSelectedClub(null);

@@ -226,7 +226,11 @@ export default function SchedulePage({
   const [selectedWeek, setSelectedWeek] = useState(initialSelection.weekIndex);
 
   const [selectedDay, setSelectedDay] = useState(initialSelection.dayIndex);
+
   const [upcomingRSVP, setUpcomingRSVP] = useState([]);
+  const [upcomingRSVPLoading, setUpcomingRSVPLoading] = useState(false);
+  const [upcomingRSVPError, setUpcomingRSVPError] = useState("");
+
   const [scheduleEvents, setScheduleEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState("");
@@ -331,27 +335,37 @@ export default function SchedulePage({
     const loadUpcomingRSVPs = async () => {
       if (!userId) {
         setUpcomingRSVP([]);
+        setUpcomingRSVPError("");
+        setUpcomingRSVPLoading(false);
         return;
       }
+
+      setUpcomingRSVPLoading(true);
+      setUpcomingRSVPError("");
 
       try {
         const rows = await getUpcomingRSVPEvents(userId);
 
-        if (!cancelled) {
-          setUpcomingRSVP(rows);
-        }
+        if (cancelled) return;
+
+        setUpcomingRSVP(rows);
       } catch (error) {
         if (cancelled) return;
 
         console.error("Unable to load upcoming RSVP events:", error);
+
         setUpcomingRSVP([]);
+        setUpcomingRSVPError("Unable to load your upcoming RSVP events.");
+      } finally {
+        if (!cancelled) {
+          setUpcomingRSVPLoading(false);
+        }
       }
     };
 
     const handleRSVPUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
 
-      // Ignore RSVP updates belonging to another student.
       if (updatedStudentId && String(updatedStudentId) !== String(userId)) {
         return;
       }
@@ -359,16 +373,30 @@ export default function SchedulePage({
       loadUpcomingRSVPs();
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadUpcomingRSVPs();
+      }
+    };
+
     loadUpcomingRSVPs();
 
     window.addEventListener("taylors-rsvp-updated", handleRSVPUpdate);
+
+    window.addEventListener("focus", loadUpcomingRSVPs);
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       cancelled = true;
 
       window.removeEventListener("taylors-rsvp-updated", handleRSVPUpdate);
+
+      window.removeEventListener("focus", loadUpcomingRSVPs);
+
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [userId, selectedDay, selectedWeek]);
+  }, [userId]);
 
   const weekConfig = weekConfigs[selectedWeek];
   const activeSchedule = databaseSchedule;
@@ -491,38 +519,106 @@ export default function SchedulePage({
         </div>
       </div>
 
-      <div className="glass rounded-2xl p-4 mb-5">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-outfit font-semibold text-white">
-            Upcoming RSVP Events
-          </h3>
-          <span className="text-[10px] font-inter text-gray-500">
+      <div className="glass mb-5 rounded-2xl p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-outfit font-semibold text-white">
+              Upcoming RSVP Events
+            </h3>
+
+            <p className="mt-0.5 text-[10px] font-inter text-gray-500">
+              Events you have registered to attend
+            </p>
+          </div>
+
+          <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-inter text-gray-400">
             {upcomingRSVP.length} saved
           </span>
         </div>
-        {upcomingRSVP.length === 0 ? (
-          <p className="text-[11px] font-inter text-gray-500">
-            No upcoming signups yet. Open an event and tap RSVP.
-          </p>
+
+        {upcomingRSVPLoading ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-7 text-center">
+            <span className="mx-auto mb-2 block h-5 w-5 animate-spin rounded-full border-2 border-white/10 border-t-balance-accent" />
+
+            <p className="text-[11px] font-inter text-gray-400">
+              Loading your upcoming RSVP events…
+            </p>
+          </div>
+        ) : upcomingRSVPError ? (
+          <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 px-4 py-5 text-center">
+            <p className="text-[11px] font-inter text-yellow-300">
+              {upcomingRSVPError}
+            </p>
+          </div>
+        ) : upcomingRSVP.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-center">
+            <p className="text-sm font-outfit font-semibold text-white">
+              No upcoming RSVP events
+            </p>
+
+            <p className="mt-1 text-[11px] font-inter text-gray-500">
+              Open an event and tap RSVP to save it here.
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
-            {upcomingRSVP.slice(0, 6).map((item) => {
-              return (
-                <button
-                  key={item.rsvpId || item.eventId || item.id}
-                  type="button"
-                  onClick={() => onEventClick?.(item)}
-                  className="w-full text-left rounded-xl border border-white/10 bg-white/5 px-3 py-2 hover:bg-white/10 transition-colors"
-                >
-                  <p className="text-xs font-outfit font-semibold text-white truncate">
-                    {item.title}
-                  </p>
-                  <p className="text-[10px] font-inter text-gray-500 truncate">
-                    {item.host} • {item.date || "TBD"} • {item.time || "TBD"}
-                  </p>
-                </button>
-              );
-            })}
+            {upcomingRSVP.slice(0, 6).map((item) => (
+              <motion.button
+                key={item.rsvpId || `${item.sourceTable}-${item.sourceId}`}
+                type="button"
+                whileTap={{ scale: 0.98 }}
+                onClick={() => onEventClick?.(item)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-outfit font-semibold text-white">
+                      {item.title}
+                    </p>
+
+                    <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
+                      {item.host || "Campus Event"}
+                    </p>
+
+                    <p className="mt-1 truncate text-[10px] font-inter text-gray-400">
+                      📍 {item.location || "Location TBC"}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[8px] font-inter font-semibold ${
+                        item.eventType === "club"
+                          ? "bg-purple-400/10 text-purple-300"
+                          : "bg-taylor-red/10 text-red-300"
+                      }`}
+                    >
+                      {item.eventType === "club" ? "Club" : "Campus"}
+                    </span>
+
+                    <span className="text-[9px] font-inter text-balance-accent">
+                      RSVP Confirmed
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/5 pt-2">
+                  <span className="text-[9px] font-inter text-gray-400">
+                    📅 {item.date || "Date TBC"}
+                  </span>
+
+                  <span className="text-[9px] font-inter text-gray-400">
+                    🕐 {item.time || "Time TBC"}
+                  </span>
+                </div>
+              </motion.button>
+            ))}
+
+            {upcomingRSVP.length > 6 && (
+              <p className="pt-1 text-center text-[10px] font-inter text-gray-500">
+                Showing the next 6 of {upcomingRSVP.length} RSVP events
+              </p>
+            )}
           </div>
         )}
       </div>

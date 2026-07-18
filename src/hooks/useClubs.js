@@ -173,7 +173,9 @@ export default function useClubs(searchTerm = "") {
       window.dispatchEvent(
         new CustomEvent("taylors-club-membership-updated", {
           detail: {
+            studentId: result.studentId,
             clubId: numericClubId,
+            clubName: result.clubName,
             joined: shouldJoin,
             memberCount: result.memberCount,
           },

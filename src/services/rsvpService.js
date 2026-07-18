@@ -1,237 +1,134 @@
+// This is the src/services/rsvpService.js file
 import { supabase } from "../libs/supabase";
-import { addUserActivity } from "../data/db";
-import { createStudentActivity } from "./studentActivityService";
 
+function getTodayISO() {
+  const now = new Date();
 
-
-async function getEventTitle(eventId, fallback = "Campus event") {
-  const { data, error } = await supabase
-    .from("campus_events")
-    .select("title")
-    .eq("id", String(eventId))
-    .maybeSingle();
-
-  if (error) {
-    console.warn("Unable to load event title for activity history:", error);
-  }
-
-  return data?.title || fallback;
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-/**
- * Notifies React components that RSVP information has changed.
- * SchedulePage listens for this event and reloads the RSVP list.
- */
-function dispatchRSVPUpdate(detail = {}) {
-  if (typeof window === "undefined") return;
+function normalizeDate(value) {
+  if (!value) return "";
 
-  window.dispatchEvent(
-    new CustomEvent("taylors-rsvp-updated", {
-      detail,
-    }),
+  return String(value).slice(0, 10);
+}
+
+function getCampusEventDate(event) {
+  return normalizeDate(
+    event?.date ||
+      event?.event_date ||
+      event?.start_date ||
+      event?.start_at,
   );
 }
 
-/**
- * Convert a Supabase RSVP row into the event shape used by the UI.
- */
-function mapRSVPRow(row) {
-  const event = Array.isArray(row.campus_events)
-    ? row.campus_events[0]
-    : row.campus_events;
+function getCampusEventTime(event) {
+  return (
+    event?.time ||
+    event?.event_time ||
+    event?.time_range ||
+    event?.start_time ||
+    ""
+  );
+}
 
-  if (!event) return null;
+function getStartMinutes(value) {
+  if (!value) return 0;
 
+  const firstTime = String(value)
+    .split(" - ")[0]
+    .trim();
+
+  if (/^\d{1,2}:\d{2}/.test(firstTime) && !/[AP]M/i.test(firstTime)) {
+    const [hours, minutes] = firstTime.split(":").map(Number);
+
+    return (hours || 0) * 60 + (minutes || 0);
+  }
+
+  const match = firstTime.match(
+    /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i,
+  );
+
+  if (!match) return 0;
+
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3].toUpperCase();
+
+  hours %= 12;
+
+  if (period === "PM") {
+    hours += 12;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function getEventTimestamp(event) {
+  const eventDate = getCampusEventDate(event);
+
+  if (!eventDate) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const date = new Date(`${eventDate}T00:00:00`);
+  const minutes = getStartMinutes(getCampusEventTime(event));
+
+  date.setHours(
+    Math.floor(minutes / 60),
+    minutes % 60,
+    0,
+    0,
+  );
+
+  return date.getTime();
+}
+
+function mapRSVPEvent(event, rsvp) {
   return {
     ...event,
 
-    // Keep the RSVP row information separate from the event ID.
-    rsvpId: row.id,
-    eventId: row.event_id,
-    rsvpStatus: row.status,
-    registeredAt: row.registered_at,
-    cancelledAt: row.cancelled_at,
-    checkedInAt: row.checked_in_at,
+    // Keep the real campus_events ID.
+    id: event.id,
+    eventId: event.id,
+    sourceId: event.id,
+    sourceTable: "campus_events",
+    eventType: "campus",
+
+    rsvpId: rsvp.id,
+    rsvpStatus: rsvp.status,
+    registeredAt: rsvp.registered_at,
+    isRSVPd: true,
+
+    title: event.title || "Campus Event",
+
+    host:
+      event.host ||
+      event.organizer ||
+      event.organizer_name ||
+      "Campus Event",
+
+    date: getCampusEventDate(event),
+    time: getCampusEventTime(event),
+
+    location:
+      event.location ||
+      event.venue ||
+      event.room ||
+      "Location TBC",
+
+    registered: Number(event.registered || 0),
+    capacity: Number(event.capacity || 0),
   };
 }
 
-/**
- * Get the signed-in student's upcoming RSVP events.
- */
-export async function getUpcomingRSVPEvents(studentId) {
-  if (!studentId) return [];
-
-  const today = new Date().toISOString().split("T")[0];
-
-  const { data, error } = await supabase
-    .from("event_rsvps")
-    .select(`
-      id,
-      student_id,
-      event_id,
-      status,
-      registered_at,
-      cancelled_at,
-      checked_in_at,
-      campus_events!event_rsvps_event_id_fkey (*)
-    `)
-    .eq("student_id", studentId)
-    .in("status", ["registered", "waitlisted", "attended"])
-    .order("registered_at", { ascending: false });
-
-  if (error) {
-    throw new Error(error.message || "Unable to load RSVP events.");
-  }
-
-  return (data || [])
-    .map(mapRSVPRow)
-    .filter(Boolean)
-    .filter((event) => {
-      // Keep events without dates rather than hiding them.
-      if (!event.date) return true;
-
-      return String(event.date).slice(0, 10) >= today;
-    })
-    .sort((a, b) => {
-      const firstDate = String(a.date || "9999-12-31");
-      const secondDate = String(b.date || "9999-12-31");
-
-      return firstDate.localeCompare(secondDate);
-    });
-}
-
-/**
- * Register the signed-in student for an event.
- *
- * Upsert allows a previously cancelled RSVP to become registered again.
- */
-export async function registerForEvent({ studentId, eventId, eventTitle }) {
-  if (!studentId) {
-    throw new Error("You must be logged in before registering.");
-  }
-
-  if (!eventId) {
-    throw new Error("The event ID is missing.");
-  }
-
-  const now = new Date().toISOString();
-
-  const { data, error } = await supabase
-    .from("event_rsvps")
-    .upsert(
-      {
-        student_id: studentId,
-        event_id: String(eventId),
-        status: "registered",
-        registered_at: now,
-        cancelled_at: null,
-        updated_at: now,
-      },
-      {
-        onConflict: "student_id,event_id",
-      },
-    )
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(error.message || "Unable to register for this event.");
-  }
-
-  const resolvedTitle = await getEventTitle(eventId, eventTitle);
-
-  const activity = {
-    userKey: studentId,
-    type: "rsvp",
-    title: `RSVP confirmed: ${resolvedTitle}`,
-    detail: "Event added to your upcoming schedule.",
-  };
-
-  addUserActivity(activity);
-  await createStudentActivity({
-    studentId,
-    type: activity.type,
-    title: activity.title,
-    detail: activity.detail,
-    entityType: "event",
-    entityId: eventId,
-    metadata: { eventTitle: resolvedTitle },
-  });
-
-  dispatchRSVPUpdate({
-    action: "registered",
-    studentId,
-    eventId: String(eventId),
-    eventTitle: resolvedTitle,
-  });
-
-  return data;
-}
-
-/**
- * Cancel an RSVP without deleting its history.
- */
-export async function cancelEventRSVP({ studentId, eventId, eventTitle }) {
+export async function getStudentRSVP(studentId, eventId) {
   if (!studentId || !eventId) {
-    throw new Error("Student ID and event ID are required.");
-  }
-
-  const { data, error } = await supabase
-    .from("event_rsvps")
-    .update({
-      status: "cancelled",
-      cancelled_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("student_id", studentId)
-    .eq("event_id", String(eventId))
-    .select()
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message || "Unable to cancel this RSVP.");
-  }
-
-  const resolvedTitle = await getEventTitle(eventId, eventTitle);
-
-  const activity = {
-    userKey: studentId,
-    type: "rsvp-remove",
-    title: `RSVP cancelled: ${resolvedTitle}`,
-    detail: "Event removed from your upcoming schedule.",
-  };
-
-  addUserActivity(activity);
-  await createStudentActivity({
-    studentId,
-    type: activity.type,
-    title: activity.title,
-    detail: activity.detail,
-    entityType: "event",
-    entityId: eventId,
-    metadata: { eventTitle: resolvedTitle },
-  });
-
-  dispatchRSVPUpdate({
-    action: "cancelled",
-    studentId,
-    eventId: String(eventId),
-    eventTitle: resolvedTitle,
-  });
-
-  return data;
-}
-
-/**
- * Check whether a student currently has an active RSVP for an event.
- */
-export async function getEventRSVPStatus({ studentId, eventId }) {
-  if (!studentId || !eventId) {
-    return {
-      isRSVPed: false,
-      status: null,
-      rsvp: null,
-    };
+    return null;
   }
 
   const { data, error } = await supabase
@@ -242,36 +139,171 @@ export async function getEventRSVPStatus({ studentId, eventId }) {
     .maybeSingle();
 
   if (error) {
-    throw new Error(error.message || "Unable to check RSVP status.");
+    throw error;
   }
 
-  const activeStatuses = ["registered", "waitlisted", "attended"];
-
-  return {
-    isRSVPed: Boolean(data && activeStatuses.includes(data.status)),
-    status: data?.status || null,
-    rsvp: data || null,
-  };
+  return data;
 }
 
-/**
- * Get the total number of active registrations for an event.
- */
-export async function getEventRegistrationCount(eventId) {
-  if (!eventId) return 0;
-
-  const { count, error } = await supabase
-    .from("event_rsvps")
-    .select("id", {
-      count: "exact",
-      head: true,
-    })
-    .eq("event_id", String(eventId))
-    .in("status", ["registered", "waitlisted", "attended"]);
-
-  if (error) {
-    throw new Error(error.message || "Unable to count registrations.");
+export async function registerForEvent({
+  studentId,
+  eventId,
+}) {
+  if (!studentId) {
+    throw new Error("Student ID is required.");
   }
 
-  return count || 0;
+  if (!eventId) {
+    throw new Error("Event ID is required.");
+  }
+
+  /*
+   * Your table has a unique constraint on student_id + event_id.
+   *
+   * Upsert allows a previously cancelled RSVP to become registered again.
+   */
+  const { data, error } = await supabase
+    .from("event_rsvps")
+    .upsert(
+      {
+        student_id: studentId,
+        event_id: String(eventId),
+        status: "registered",
+        registered_at: new Date().toISOString(),
+        cancelled_at: null,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        onConflict: "student_id,event_id",
+      },
+    )
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Unable to register for event:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function cancelEventRSVP({
+  studentId,
+  eventId,
+}) {
+  if (!studentId || !eventId) {
+    throw new Error("Student ID and event ID are required.");
+  }
+
+  const cancelledAt = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("event_rsvps")
+    .update({
+      status: "cancelled",
+      cancelled_at: cancelledAt,
+      updated_at: cancelledAt,
+    })
+    .eq("student_id", studentId)
+    .eq("event_id", String(eventId))
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Unable to cancel RSVP:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function getUpcomingRSVPEvents(studentId) {
+  if (!studentId) {
+    return [];
+  }
+
+  const todayISO = getTodayISO();
+
+  /*
+   * Use the foreign-key relationship to fetch campus_events directly.
+   *
+   * event_rsvps_event_id_fkey is the relationship name created by
+   * your Supabase schema.
+   */
+  const { data, error } = await supabase
+    .from("event_rsvps")
+    .select(
+      `
+        id,
+        student_id,
+        event_id,
+        status,
+        registered_at,
+        cancelled_at,
+        created_at,
+        updated_at,
+        campus_events!event_rsvps_event_id_fkey (*)
+      `,
+    )
+    .eq("student_id", studentId)
+    .in("status", ["registered", "waitlisted"])
+    .is("cancelled_at", null)
+    .order("registered_at", {
+      ascending: false,
+    });
+
+  if (error) {
+    console.error("Unable to load upcoming RSVP events:", error);
+    throw error;
+  }
+
+  const upcomingEvents = (data || [])
+    .map((rsvp) => {
+      /*
+       * Depending on the generated Supabase relationship, this can
+       * be returned as an object or an array.
+       */
+      const relatedEvent = Array.isArray(rsvp.campus_events)
+        ? rsvp.campus_events[0]
+        : rsvp.campus_events;
+
+      if (!relatedEvent) {
+        return null;
+      }
+
+      const eventDate = getCampusEventDate(relatedEvent);
+
+      if (!eventDate || eventDate < todayISO) {
+        return null;
+      }
+
+      const eventStatus = String(
+        relatedEvent.status || "",
+      )
+        .trim()
+        .toLowerCase();
+
+      if (
+        [
+          "cancelled",
+          "canceled",
+          "deleted",
+          "rejected",
+          "draft",
+        ].includes(eventStatus)
+      ) {
+        return null;
+      }
+
+      return mapRSVPEvent(relatedEvent, rsvp);
+    })
+    .filter(Boolean)
+    .sort(
+      (eventA, eventB) =>
+        getEventTimestamp(eventA) -
+        getEventTimestamp(eventB),
+    );
+
+  return upcomingEvents;
 }
