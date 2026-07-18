@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { adminAnalytics, roles } from "../data/admin";
 import { buildBaselineMatchScores } from "../services/eventRecommendationService";
+import { createAdminAccount, getAdminUsers } from "../services/adminService";
+import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
 
 const EVENT_TAGS = [
   "Technology",
@@ -37,27 +39,33 @@ const EVENT_TAGS = [
 const TAG_CHIP_STYLES = {
   Technology: {
     idle: "border-sky-400/40 bg-sky-500/15 text-sky-100",
-    active: "border-sky-300 bg-sky-500/35 text-white shadow-[0_0_0_1px_rgba(56,189,248,0.35)]",
+    active:
+      "border-sky-300 bg-sky-500/35 text-white shadow-[0_0_0_1px_rgba(56,189,248,0.35)]",
   },
   Career: {
     idle: "border-amber-400/40 bg-amber-500/15 text-amber-100",
-    active: "border-amber-300 bg-amber-500/35 text-white shadow-[0_0_0_1px_rgba(251,191,36,0.35)]",
+    active:
+      "border-amber-300 bg-amber-500/35 text-white shadow-[0_0_0_1px_rgba(251,191,36,0.35)]",
   },
   Wellness: {
     idle: "border-teal-400/40 bg-teal-500/15 text-teal-100",
-    active: "border-teal-300 bg-teal-500/35 text-white shadow-[0_0_0_1px_rgba(45,212,191,0.35)]",
+    active:
+      "border-teal-300 bg-teal-500/35 text-white shadow-[0_0_0_1px_rgba(45,212,191,0.35)]",
   },
   Social: {
     idle: "border-pink-400/40 bg-pink-500/15 text-pink-100",
-    active: "border-pink-300 bg-pink-500/35 text-white shadow-[0_0_0_1px_rgba(244,114,182,0.35)]",
+    active:
+      "border-pink-300 bg-pink-500/35 text-white shadow-[0_0_0_1px_rgba(244,114,182,0.35)]",
   },
   Creative: {
     idle: "border-violet-400/40 bg-violet-500/15 text-violet-100",
-    active: "border-violet-300 bg-violet-500/35 text-white shadow-[0_0_0_1px_rgba(167,139,250,0.35)]",
+    active:
+      "border-violet-300 bg-violet-500/35 text-white shadow-[0_0_0_1px_rgba(167,139,250,0.35)]",
   },
   Academic: {
     idle: "border-rose-400/40 bg-rose-500/15 text-rose-100",
-    active: "border-rose-300 bg-rose-500/35 text-white shadow-[0_0_0_1px_rgba(251,113,133,0.35)]",
+    active:
+      "border-rose-300 bg-rose-500/35 text-white shadow-[0_0_0_1px_rgba(251,113,133,0.35)]",
   },
 };
 
@@ -71,8 +79,6 @@ const FieldLabel = ({ children, hint }) => (
     ) : null}
   </div>
 );
-import { getAdmins, createAdmin } from "../data/db";
-import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
 const emptyEvent = {
   title: "",
   host: "",
@@ -1268,7 +1274,8 @@ export default function AdminDashboard({
     }
   };
 
-  // New: Handle creating a new admin user
+  // Creates an Auth user through the server-side Admin API.
+  // The currently logged-in administrator remains signed in.
   const handleCreateUser = async () => {
     const fullName = newUser.name.trim();
     const email = newUser.email.trim().toLowerCase();
@@ -1285,93 +1292,35 @@ export default function AdminDashboard({
       return;
     }
 
+    if (password.length < 8) {
+      alert("Password must contain at least 8 characters.");
+      return;
+    }
+
     if (!hasSupabaseConfig) {
       alert("Supabase is not configured.");
       return;
     }
 
-    const roleMap = {
-      "Event Manager": "admin",
-      "Analytics Viewer": "analytics_viewer",
-      "Super Admin": "super_admin",
-    };
-
-    const dbRole = roleMap[newUser.role] || "admin";
-
     try {
-      const { data: existingAdmin, error: checkError } = await supabase
-        .from("users")
-        .select("id")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (checkError) throw checkError;
-
-      if (existingAdmin) {
-        alert("This admin email already exists.");
-        return;
-      }
-
-      let userId = crypto.randomUUID();
-      let createdViaAuth = false;
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      // This calls /api/create-admin. It does not call supabase.auth.signUp() in the browser.
+      const createdAdmin = await createAdminAccount({
+        fullName,
         email,
         password,
-        options: {
-          data: {
-            full_name: fullName,
-            role: dbRole,
-            account_type: "admin",
-          },
-        },
+        role: newUser.role,
+        faculty,
       });
 
-      if (!authError && authData.user?.id) {
-        userId = authData.user.id;
-        createdViaAuth = true;
-      }
-
-      const isRateLimit =
-        authError?.message?.toLowerCase().includes("rate") ||
-        authError?.message?.toLowerCase().includes("too many") ||
-        authError?.status === 429;
-
-      if (authError && !isRateLimit) {
-        throw authError;
-      }
-
-      const { error: adminActivityError } = await supabase
-        .from("activity_logs")
-        .insert({
-          entity_type: "admin",
-          event_id: null,
-          event_title: fullName,
-          event_host: null,
-          admin_id: userId,
-          admin_email: email,
-          action: "create",
-          performed_by_id: loggedInAdmin.id,
-          performed_by_name: loggedInAdmin.name,
-          performed_by_role: loggedInAdmin.dbRole,
-        });
-
-      if (adminActivityError) {
-        console.error(
-          "Failed to insert admin activity log:",
-          adminActivityError.message,
-        );
-      }
-
+      // Reload the Access table after the server creates both auth.users and public.users records.
       await fetchSupabaseAdminUsers();
 
       alert(
-        createdViaAuth
-          ? `${newUser.role} account created successfully.`
-          : `${newUser.role} saved to Admin Users. Auth was skipped due to rate limit.`,
+        `${newUser.role} account created successfully for ${createdAdmin.email}.`,
       );
 
       setShowCreateUserModal(false);
+
       setNewUser({
         name: "",
         email: "",
@@ -1379,9 +1328,10 @@ export default function AdminDashboard({
         role: "Event Manager",
         faculty: "Computing",
       });
-    } catch (err) {
-      console.error("Failed to create admin account:", err);
-      alert(err.message || "Failed to create admin account.");
+    } catch (error) {
+      console.error("Failed to create admin account:", error);
+
+      alert(error.message || "Failed to create admin account.");
     }
   };
 
@@ -1653,7 +1603,8 @@ export default function AdminDashboard({
 
                       {/* X Axis */}
                       <div className="text-center mt-2 text-[10px] font-inter text-gray-500">
-                        Day of week · numbers above bars = Focus / Balance student counts
+                        Day of week · numbers above bars = Focus / Balance
+                        student counts
                       </div>
                     </div>
                   </div>
@@ -2489,7 +2440,9 @@ export default function AdminDashboard({
                   </div>
 
                   <div>
-                    <FieldLabel hint="Who is organising">Host / Club</FieldLabel>
+                    <FieldLabel hint="Who is organising">
+                      Host / Club
+                    </FieldLabel>
                     <input
                       value={eventDraft.host}
                       onChange={(e) =>
@@ -2679,20 +2632,26 @@ export default function AdminDashboard({
                             </p>
                             <p className="text-[10px] font-inter text-blue-300">
                               Schedule {b.schedule}%{" "}
-                              <span className="text-gray-500">· Focus/Balance</span>
+                              <span className="text-gray-500">
+                                · Focus/Balance
+                              </span>
                             </p>
                             <p className="text-[10px] font-inter text-amber-300">
                               Proximity {b.proximity}%{" "}
-                              <span className="text-gray-500">· zone/location</span>
+                              <span className="text-gray-500">
+                                · zone/location
+                              </span>
                             </p>
                             <p className="text-[10px] font-inter text-purple-300">
                               Social {b.social}%{" "}
-                              <span className="text-gray-500">· capacity size</span>
+                              <span className="text-gray-500">
+                                · capacity size
+                              </span>
                             </p>
                           </div>
                           <p className="mt-2 text-[10px] font-inter text-gray-500">
-                            Formula: 40% Interest + 30% Schedule + 20% Proximity +
-                            10% Social. On Home, Interested / Not interested
+                            Formula: 40% Interest + 30% Schedule + 20% Proximity
+                            + 10% Social. On Home, Interested / Not interested
                             further personalises these % for each student.
                           </p>
                         </>
