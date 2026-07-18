@@ -591,6 +591,11 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
                   Step 1 — enter your campus email. We’ll email a reset link.
                   After you open that link, you’ll set a new password here.
                 </p>
+                <p className="text-[11px] text-gray-500">
+                  Tip for admins: in Supabase Auth → URL Configuration, allow
+                  redirect URLs for localhost and your Vercel domain so the
+                  reset link opens this app.
+                </p>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-inter text-gray-400 ml-1">

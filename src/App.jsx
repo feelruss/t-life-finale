@@ -37,6 +37,7 @@ import LoginPage from "./pages/LoginPage";
 import Profile from "./pages/Profile";
 import CompleteProfilePage from "./pages/CompleteProfilePage";
 import Chatbot from "./components/Chatbot";
+import Toast from "./components/Toast";
 import { supabase } from "./libs/supabase";
 import { getCurrentSupabaseUser } from "./libs/auth";
 import { createStudentActivity } from "./services/studentActivityService";
@@ -128,6 +129,16 @@ export default function App() {
   const [homeTimetableLoading, setHomeTimetableLoading] = useState(false);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const passwordRecoveryRef = useRef(false);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+
+  const showToast = useCallback((message, title = "") => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToast({ id: Date.now(), title, message });
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
+  }, []);
   const [rsvpEventIds, setRsvpEventIds] = useState(() =>
     getUserRSVPEventIds("guest"),
   );
@@ -807,8 +818,9 @@ export default function App() {
         accentColor: "#4EEAAF",
         eventId: event.id,
       });
-      alert(
-        `✅ Checked in to ${event.title}. +50 points · AI Status Meter updated.`,
+      showToast(
+        `+50 points · Focus & Wellness updated.`,
+        `Checked in: ${event.title}`,
       );
     } else if (result.status === "unchecked") {
       const nextPoints = adjustUserPoints(
@@ -849,13 +861,12 @@ export default function App() {
         accentColor: "#9CA3AF",
         eventId: event.id,
       });
-      alert(
-        `↩️ Check-in removed for ${event.title}. Scores have been adjusted.`,
+      showToast(
+        "Focus & Wellness scores adjusted.",
+        `Check-in removed: ${event.title}`,
       );
     } else {
-      alert(
-        `ℹ️ Unable to update check-in for ${event.title}. Please try again.`,
-      );
+      showToast("Please try again.", "Check-in failed");
     }
   };
 
@@ -873,9 +884,9 @@ export default function App() {
         title: `Reward redeemed (${cost} points)`,
         detail: `Remaining points: ${nextPoints}`,
       });
-      alert(`🎁 Redeemed! -${cost} points.`);
+      showToast(`-${cost} points remaining: ${nextPoints}`, "Reward redeemed");
     } else {
-      alert("❌ Not enough points!");
+      showToast("Earn more points from events first.", "Not enough points");
     }
   };
 
@@ -1027,8 +1038,9 @@ export default function App() {
           accentColor: "#60A5FA",
           eventId: canonicalId,
         });
-        alert(
-          `🎟️ Joined ${event.title}. Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%.`,
+        showToast(
+          `Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%`,
+          `Joined ${event.title}`,
         );
       } else {
         const activity = {
@@ -1057,8 +1069,9 @@ export default function App() {
           accentColor: "#9CA3AF",
           eventId: canonicalId,
         });
-        alert(
-          `↩️ Left ${event.title}. Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%.`,
+        showToast(
+          `Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%`,
+          `Left ${event.title}`,
         );
       }
     }
@@ -1521,6 +1534,8 @@ export default function App() {
         !showEventDetail && (
           <Chatbot mode={mode} displayName={displayName} />
         )}
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

@@ -7,12 +7,17 @@ import {
   HeartIcon,
   UserGroupIcon,
 } from "@heroicons/react/24/outline";
-import {
-  getEventPreferences,
-  setEventHidden,
-  setEventInterested,
-} from "../data/db";
+import { getEventPreferences } from "../data/db";
 import { fetchCampusEvents } from "../services/campusEventsService";
+import {
+  recommendEvents,
+  RECOMMENDATION_LIMIT,
+} from "../services/eventRecommendationService";
+import {
+  loadEventPreferences,
+  saveEventHidden,
+  saveEventInterested,
+} from "../services/eventPreferencesService";
 
 const iconMap = {
   CodeBracketIcon: CodeBracketIcon,
@@ -69,7 +74,14 @@ export default function EventFeed({
   }, [category]);
 
   useEffect(() => {
+    let cancelled = false;
     setPreferences(getEventPreferences(userKey));
+    loadEventPreferences(userKey).then((prefs) => {
+      if (!cancelled) setPreferences(prefs);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [userKey]);
 
   useEffect(() => {
@@ -84,41 +96,14 @@ export default function EventFeed({
     return () => window.removeEventListener("taylors-db-updated", onDataUpdate);
   }, [userKey]);
 
-  const visibleEvents = useMemo(() => {
-    const interestedSet = new Set(interestedEvents.map((id) => String(id)));
-    const hiddenSet = new Set(hiddenEvents.map((id) => String(id)));
-    const sourceEvents = events.filter(
-      (event) => !hiddenSet.has(String(event.id)),
-    );
-    const interestedSource = events.filter((event) =>
-      interestedSet.has(String(event.id)),
-    );
-
-    const scoreEvent = (candidate) => {
-      if (interestedSet.has(String(candidate.id))) return 1000;
-      let score = 0;
-
-      interestedSource.forEach((seed) => {
-        if (String(seed.id) === String(candidate.id)) return;
-        if (seed.tag && candidate.tag && seed.tag === candidate.tag) score += 3;
-        if (seed.host && candidate.host && seed.host === candidate.host)
-          score += 2;
-
-        const seedTags = seed.tgcTags || [];
-        const candidateTags = candidate.tgcTags || [];
-        const shared = seedTags.filter((tag) =>
-          candidateTags.includes(tag),
-        ).length;
-        score += shared * 2;
-      });
-
-      const matchValue =
-        Number(String(candidate.match_score || "0").replace("%", "")) || 0;
-      return score + matchValue / 100;
-    };
-
-    return [...sourceEvents].sort((a, b) => scoreEvent(b) - scoreEvent(a));
-  }, [events, hiddenEvents, interestedEvents]);
+  const { recommended: visibleEvents, totalAvailable } = useMemo(() => {
+    return recommendEvents({
+      events,
+      preferences: { interested: interestedEvents, hidden: hiddenEvents },
+      mode: category,
+      limit: RECOMMENDATION_LIMIT,
+    });
+  }, [events, hiddenEvents, interestedEvents, category]);
 
   useEffect(() => {
     return () => {
@@ -126,18 +111,22 @@ export default function EventFeed({
     };
   }, [undoTimer]);
 
-  const handleToggleInterested = (eventId) => {
+  const handleToggleInterested = async (eventId) => {
     const normalizedId = String(eventId);
     const isInterested = interestedEvents.some(
       (id) => String(id) === normalizedId,
     );
-    setEventInterested(eventId, !isInterested, userKey);
-    setPreferences(getEventPreferences(userKey));
+    const prefs = await saveEventInterested(
+      userKey,
+      eventId,
+      !isInterested,
+    );
+    setPreferences(prefs);
   };
 
-  const handleNotInterested = (eventId) => {
-    setEventHidden(String(eventId), true, userKey);
-    setPreferences(getEventPreferences(userKey));
+  const handleNotInterested = async (eventId) => {
+    const prefs = await saveEventHidden(userKey, String(eventId), true);
+    setPreferences(prefs);
     setLastHidden(eventId);
     if (undoTimer) clearTimeout(undoTimer);
     const t = setTimeout(() => setLastHidden(null), 5000);
@@ -145,19 +134,30 @@ export default function EventFeed({
   };
 
   const matchMath = (event) => {
+    // recommendEvents already writes personalized match_breakdown onto each card
     const b = event.match_breakdown || {};
     const fallback =
       Number(String(event.match_score || "0").replace("%", "")) || 0;
-    const i = Number(b.interest || fallback) || 0;
-    const s = Number(b.schedule || Math.max(0, fallback - 5)) || 0;
-    const p = Number(b.proximity || Math.max(0, fallback - 10)) || 0;
-    const so = Number(b.social || Math.max(0, fallback - 15)) || 0;
+    const i = Number(b.interest) > 0 ? Number(b.interest) : fallback || 70;
+    const s =
+      Number(b.schedule) > 0
+        ? Number(b.schedule)
+        : Math.max(0, fallback - 5) || 75;
+    const p =
+      Number(b.proximity) > 0
+        ? Number(b.proximity)
+        : Math.max(0, fallback - 10) || 70;
+    const so =
+      Number(b.social) > 0
+        ? Number(b.social)
+        : Math.max(0, fallback - 15) || 65;
     const weighted = i * 0.4 + s * 0.3 + p * 0.2 + so * 0.1;
     return {
-      interest: i,
-      schedule: s,
-      social: so,
-      score: Math.round(weighted) || Math.round(fallback),
+      interest: Math.round(i),
+      schedule: Math.round(s),
+      proximity: Math.round(p),
+      social: Math.round(so),
+      score: Math.round(weighted) || Math.round(fallback) || 70,
     };
   };
 
@@ -174,7 +174,7 @@ export default function EventFeed({
           <p
             className={`text-[11px] font-inter font-medium uppercase tracking-widest ${isFocus ? "text-red-100" : "text-teal-100"}`}
           >
-            {isFocus ? "High-Intensity Matches" : "Holistic Suggestions"}
+            {isFocus ? "Recommended for you" : "Wellness picks for you"}
           </p>
         </div>
         <p
@@ -186,9 +186,21 @@ export default function EventFeed({
         >
           {loading
             ? "Loading..."
-            : `${visibleEvents.length} events${source === "supabase" ? "" : source === "local" ? " · offline" : ""}`}
+            : `Top ${visibleEvents.length}${
+                totalAvailable > visibleEvents.length
+                  ? ` of ${totalAvailable}`
+                  : ""
+              }${source === "local" ? " · offline" : ""}`}
         </p>
       </div>
+
+      {!loading && visibleEvents.length > 0 && (
+        <p className="mb-3 text-[10px] font-inter text-gray-400">
+          Recommendation engine: tap Interested to boost similar topics, or Not
+          interested to hide them. Match % = 40% Interest + 30% Schedule + 20%
+          Proximity + 10% Social.
+        </p>
+      )}
 
       <AnimatePresence mode="wait">
         <motion.div
@@ -288,16 +300,36 @@ export default function EventFeed({
                       {event.description}
                     </p>
 
+                    {event.whyRecommended && (
+                      <div
+                        className={`mb-2 rounded-lg border px-3 py-2 ${
+                          isFocus
+                            ? "border-taylor-red/30 bg-taylor-red/10"
+                            : "border-teal-400/25 bg-teal-400/10"
+                        }`}
+                      >
+                        <p className="text-[9px] font-inter uppercase tracking-wider text-gray-400">
+                          Why this is recommended
+                        </p>
+                        <p className="mt-0.5 text-[12px] font-outfit font-semibold text-white">
+                          Because {event.whyRecommended}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
                       <p className="text-[10px] font-inter text-gray-400">
-                        Why this matches you
+                        Match breakdown (personalised from your taps)
                       </p>
-                      <div className="mt-1 flex flex-wrap gap-2">
+                      <div className="mt-1.5 flex flex-wrap gap-2">
                         <span className="text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-0.5">
                           Interest {math.interest}%
                         </span>
                         <span className="text-[10px] text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded px-2 py-0.5">
                           Schedule {math.schedule}%
+                        </span>
+                        <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5">
+                          Proximity {math.proximity}%
                         </span>
                         <span className="text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 rounded px-2 py-0.5">
                           Social {math.social}%
@@ -362,9 +394,13 @@ export default function EventFeed({
             <span className="text-sm">Removed from suggestions</span>
             <button
               className="text-sm text-taylor-red font-semibold"
-              onClick={() => {
-                setEventHidden(String(lastHidden), false, userKey);
-                setPreferences(getEventPreferences(userKey));
+              onClick={async () => {
+                const prefs = await saveEventHidden(
+                  userKey,
+                  String(lastHidden),
+                  false,
+                );
+                setPreferences(prefs);
                 setLastHidden(null);
                 if (undoTimer) {
                   clearTimeout(undoTimer);

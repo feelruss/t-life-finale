@@ -23,6 +23,54 @@ import {
   Zap,
 } from "lucide-react";
 import { adminAnalytics, roles } from "../data/admin";
+import { buildBaselineMatchScores } from "../services/eventRecommendationService";
+
+const EVENT_TAGS = [
+  "Technology",
+  "Career",
+  "Wellness",
+  "Social",
+  "Creative",
+  "Academic",
+];
+
+const TAG_CHIP_STYLES = {
+  Technology: {
+    idle: "border-sky-400/40 bg-sky-500/15 text-sky-100",
+    active: "border-sky-300 bg-sky-500/35 text-white shadow-[0_0_0_1px_rgba(56,189,248,0.35)]",
+  },
+  Career: {
+    idle: "border-amber-400/40 bg-amber-500/15 text-amber-100",
+    active: "border-amber-300 bg-amber-500/35 text-white shadow-[0_0_0_1px_rgba(251,191,36,0.35)]",
+  },
+  Wellness: {
+    idle: "border-teal-400/40 bg-teal-500/15 text-teal-100",
+    active: "border-teal-300 bg-teal-500/35 text-white shadow-[0_0_0_1px_rgba(45,212,191,0.35)]",
+  },
+  Social: {
+    idle: "border-pink-400/40 bg-pink-500/15 text-pink-100",
+    active: "border-pink-300 bg-pink-500/35 text-white shadow-[0_0_0_1px_rgba(244,114,182,0.35)]",
+  },
+  Creative: {
+    idle: "border-violet-400/40 bg-violet-500/15 text-violet-100",
+    active: "border-violet-300 bg-violet-500/35 text-white shadow-[0_0_0_1px_rgba(167,139,250,0.35)]",
+  },
+  Academic: {
+    idle: "border-rose-400/40 bg-rose-500/15 text-rose-100",
+    active: "border-rose-300 bg-rose-500/35 text-white shadow-[0_0_0_1px_rgba(251,113,133,0.35)]",
+  },
+};
+
+const FieldLabel = ({ children, hint }) => (
+  <div className="mb-1.5 flex items-center justify-between gap-2">
+    <label className="text-[10px] font-inter font-semibold uppercase tracking-wider text-gray-400">
+      {children}
+    </label>
+    {hint ? (
+      <span className="text-[9px] font-inter text-gray-500">{hint}</span>
+    ) : null}
+  </div>
+);
 import { getAdmins, createAdmin } from "../data/db";
 import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
 const emptyEvent = {
@@ -56,25 +104,32 @@ const MOCK_FACULTY_STUDENTS = {
   Hospitality: 0,
 };
 
-const toSupabaseRow = (event, creator = null) => ({
-  title: event.title,
-  host: event.host,
-  event_date: event.date || null,
-  event_time: event.time || null,
-  location: event.location || null,
-  zone: event.zone || null,
-  category: event.category || "focus",
-  capacity: Number(event.capacity) || 0,
-  registered: Number(event.registered) || 0,
-  description: event.description || null,
-  tag: event.tag || "Technology",
-  emoji: event.emoji || "📚",
-  ...(creator && {
-    created_by_id: creator.id,
-    created_by_name: creator.name,
-    created_by_role: creator.role,
-  }),
-});
+const toSupabaseRow = (event, creator = null) => {
+  const baseline = buildBaselineMatchScores(event);
+
+  return {
+    title: event.title,
+    host: event.host,
+    event_date: event.date || null,
+    event_time: event.time || null,
+    location: event.location || null,
+    zone: event.zone || null,
+    category: event.category || "focus",
+    capacity: Number(event.capacity) || 0,
+    registered: Number(event.registered) || 0,
+    description: event.description || null,
+    tag: event.tag || "Technology",
+    emoji: event.emoji || "📚",
+    // Always recalculate so retagging Topic/Mode updates student %s.
+    match_score: baseline.match_score,
+    match_breakdown: baseline.match_breakdown,
+    ...(creator && {
+      created_by_id: creator.id,
+      created_by_name: creator.name,
+      created_by_role: creator.role,
+    }),
+  };
+};
 
 const fromSupabaseEvent = (row) => ({
   id: row.id,
@@ -114,7 +169,7 @@ const sortNewestFirst = (list) =>
       new Date(a.updatedAt || a.createdAt || 0),
   );
 
-// Simple bar chart component
+// Simple bar chart component — numbers = count of students engaged that day
 function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
   const maxVal = Math.max(
     0,
@@ -124,11 +179,10 @@ function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
   );
 
   return (
-    // New: Added gap between Y-axis and bars, and adjusted height to account for X-axis labels
     <div className="flex gap-2" style={{ height }}>
       <div
         className="flex flex-col justify-between items-end pr-1 text-[8px] font-inter text-gray-500"
-        style={{ height: height - 20, minWidth: 24 }}
+        style={{ height: height - 20, minWidth: 28 }}
       >
         {[
           maxVal,
@@ -142,35 +196,46 @@ function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
       </div>
 
       <div className="flex-1 flex items-end justify-between gap-1">
-        {data.map((d, i) => (
-          <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-            <div
-              className="flex items-end gap-px w-full justify-center"
-              style={{ height: height - 20 }}
-            >
-              <motion.div
-                className="flex-1 max-w-[12px] rounded-t bg-taylor-red/80"
-                initial={{ height: 0 }}
-                animate={{
-                  height: `${maxVal ? (d[dataKeyA] / maxVal) * 100 : 0}%`,
-                }}
-                transition={{ duration: 0.5, delay: i * 0.05 }}
-              />
-              <motion.div
-                className="flex-1 max-w-[12px] rounded-t bg-balance-accent/80"
-                initial={{ height: 0 }}
-                animate={{
-                  height: `${maxVal ? (d[dataKeyB] / maxVal) * 100 : 0}%`,
-                }}
-                transition={{ duration: 0.5, delay: i * 0.05 + 0.1 }}
-              />
-            </div>
+        {data.map((d, i) => {
+          const focusCount = Number(d[dataKeyA] || 0);
+          const balanceCount = Number(d[dataKeyB] || 0);
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+              <div className="flex items-center gap-0.5 text-[7px] font-inter text-gray-400 leading-none h-3">
+                <span className="text-taylor-red">{focusCount}</span>
+                <span className="text-gray-600">/</span>
+                <span className="text-teal-400">{balanceCount}</span>
+              </div>
+              <div
+                className="flex items-end gap-px w-full justify-center"
+                style={{ height: height - 32 }}
+              >
+                <motion.div
+                  title={`Focus: ${focusCount} students`}
+                  className="flex-1 max-w-[12px] rounded-t bg-taylor-red/80"
+                  initial={{ height: 0 }}
+                  animate={{
+                    height: `${maxVal ? (focusCount / maxVal) * 100 : 0}%`,
+                  }}
+                  transition={{ duration: 0.5, delay: i * 0.05 }}
+                />
+                <motion.div
+                  title={`Balance: ${balanceCount} students`}
+                  className="flex-1 max-w-[12px] rounded-t bg-balance-accent/80"
+                  initial={{ height: 0 }}
+                  animate={{
+                    height: `${maxVal ? (balanceCount / maxVal) * 100 : 0}%`,
+                  }}
+                  transition={{ duration: 0.5, delay: i * 0.05 + 0.1 }}
+                />
+              </div>
 
-            <span className="text-[8px] font-inter text-gray-500">
-              {d[labelKey]}
-            </span>
-          </div>
-        ))}
+              <span className="text-[8px] font-inter text-gray-500">
+                {d[labelKey]}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -205,7 +270,9 @@ function StatCard({ icon: Icon, label, value, change, changeType, color }) {
         )}
       </div>
       <p className="text-xl font-outfit font-bold text-white">{value}</p>
-      <p className="text-[10px] font-inter text-gray-500 mt-0.5">{label}</p>
+      <p className="text-[10px] font-inter text-gray-400 mt-0.5 font-medium">
+        {label}
+      </p>
     </motion.div>
   );
 }
@@ -1531,17 +1598,22 @@ export default function AdminDashboard({
               {/* Weekly Engagement Chart */}
               <div className="glass rounded-2xl p-5 mb-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-outfit font-semibold text-white">
-                    Weekly Engagement
-                  </h3>
+                  <div>
+                    <h3 className="text-sm font-outfit font-semibold text-white">
+                      Weekly Engagement
+                    </h3>
+                    <p className="mt-0.5 text-[10px] font-inter text-gray-500">
+                      Bar height = number of students engaged that day
+                    </p>
+                  </div>
                   <div className="flex items-center gap-3">
                     <span className="flex items-center gap-1 text-[9px] font-inter text-gray-400">
                       <span className="w-2 h-2 rounded-sm bg-taylor-red/80"></span>{" "}
-                      Focus
+                      Focus students
                     </span>
                     <span className="flex items-center gap-1 text-[9px] font-inter text-gray-400">
                       <span className="w-2 h-2 rounded-sm bg-balance-accent/80"></span>{" "}
-                      Balance
+                      Balance students
                     </span>
                   </div>
                 </div>
@@ -1581,7 +1653,7 @@ export default function AdminDashboard({
 
                       {/* X Axis */}
                       <div className="text-center mt-2 text-[10px] font-inter text-gray-500">
-                        Day of Week
+                        Day of week · numbers above bars = Focus / Balance student counts
                       </div>
                     </div>
                   </div>
@@ -1592,9 +1664,12 @@ export default function AdminDashboard({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 {/* Top Events */}
                 <div className="glass rounded-2xl p-5">
-                  <h3 className="text-sm font-outfit font-semibold text-white mb-3">
+                  <h3 className="text-sm font-outfit font-semibold text-white mb-1">
                     Top Events This Month
                   </h3>
+                  <p className="mb-3 text-[10px] font-inter text-gray-500">
+                    Fill % · RSVPs / capacity (seats taken)
+                  </p>
                   <div className="space-y-2">
                     {topEvents.map((evt, i) => {
                       const fillRate =
@@ -1611,7 +1686,6 @@ export default function AdminDashboard({
                           key={i}
                           className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]"
                         >
-                          {/* New: Event number and title */}
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <span className="text-[10px] font-bold text-gray-600 w-4">
                               #{i + 1}
@@ -1620,12 +1694,12 @@ export default function AdminDashboard({
                               {evt.title}
                             </p>
                           </div>
-                          <div className="flex items-center gap-2 ml-2">
+                          <div className="flex flex-col items-end ml-2 shrink-0">
                             <span className="text-[10px] font-inter text-yellow-400">
-                              {fillRate}%
+                              {fillRate}% filled
                             </span>
-                            <span className="text-[10px] font-inter text-gray-500">
-                              {evt.registered}/{evt.capacity}
+                            <span className="text-[9px] font-inter text-gray-500">
+                              {evt.registered} RSVPs / {evt.capacity} seats
                             </span>
                           </div>
                         </div>
@@ -1636,9 +1710,12 @@ export default function AdminDashboard({
 
                 {/* Category Breakdown */}
                 <div className="glass rounded-2xl p-5">
-                  <h3 className="text-sm font-outfit font-semibold text-white mb-3">
+                  <h3 className="text-sm font-outfit font-semibold text-white mb-1">
                     Event Categories
                   </h3>
+                  <p className="mb-3 text-[10px] font-inter text-gray-500">
+                    How many published events sit in each topic
+                  </p>
                   <div className="space-y-2.5">
                     {eventCategoryCounts.map(
                       (
@@ -1653,7 +1730,7 @@ export default function AdminDashboard({
                               className="text-[11px] font-inter font-bold"
                               style={{ color: cat.color }}
                             >
-                              {cat.count}
+                              {cat.count} events
                             </span>
                           </div>
                           <div className="w-full h-1.5 bg-white/5 rounded-full">
@@ -2399,113 +2476,229 @@ export default function AdminDashboard({
                 )}
 
                 <div className="space-y-3">
-                  <input
-                    value={eventDraft.title}
-                    onChange={(e) =>
-                      updateEventDraft({ title: e.target.value })
-                    }
-                    placeholder="Event title"
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                  />
-
-                  <input
-                    value={eventDraft.host}
-                    onChange={(e) => updateEventDraft({ host: e.target.value })}
-                    placeholder="Host / Club"
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                  />
-
-                  <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <FieldLabel>Event title</FieldLabel>
                     <input
-                      type="date"
-                      value={eventDraft.date}
+                      value={eventDraft.title}
                       onChange={(e) =>
-                        updateEventDraft({ date: e.target.value })
+                        updateEventDraft({ title: e.target.value })
                       }
-                      className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                    />
-
-                    <input
-                      type="time"
-                      value={eventDraft.time}
-                      onChange={(e) =>
-                        updateEventDraft({ time: e.target.value })
-                      }
-                      className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
+                      placeholder="e.g. Imagine Hack"
+                      className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
                     />
                   </div>
 
-                  <input
-                    value={eventDraft.location}
-                    onChange={(e) =>
-                      updateEventDraft({ location: e.target.value })
-                    }
-                    placeholder="Location"
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                  />
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <select
-                      value={eventDraft.category}
-                      onChange={(e) =>
-                        updateEventDraft({
-                          category: e.target.value,
-                          emoji: e.target.value === "focus" ? "📚" : "🌿",
-                        })
-                      }
-                      className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                    >
-                      <option value="focus" className="bg-[#12121a] text-white">
-                        Focus
-                      </option>
-                      <option
-                        value="balance"
-                        className="bg-[#12121a] text-white"
-                      >
-                        Balance
-                      </option>
-                    </select>
-
+                  <div>
+                    <FieldLabel hint="Who is organising">Host / Club</FieldLabel>
                     <input
-                      type="number"
-                      value={eventDraft.capacity}
+                      value={eventDraft.host}
                       onChange={(e) =>
-                        updateEventDraft({ capacity: Number(e.target.value) })
+                        updateEventDraft({ host: e.target.value })
                       }
-                      placeholder="Capacity"
-                      className="px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
+                      placeholder="e.g. Taylor's Agents of Tech"
+                      className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
                     />
                   </div>
 
-                  <input
-                    value={eventDraft.zone}
-                    onChange={(e) => updateEventDraft({ zone: e.target.value })}
-                    placeholder="Zone"
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel>Event date</FieldLabel>
+                      <input
+                        type="date"
+                        value={eventDraft.date}
+                        onChange={(e) =>
+                          updateEventDraft({ date: e.target.value })
+                        }
+                        className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm [color-scheme:dark]"
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Start time</FieldLabel>
+                      <input
+                        type="time"
+                        value={eventDraft.time}
+                        onChange={(e) =>
+                          updateEventDraft({ time: e.target.value })
+                        }
+                        className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
 
-                  <select
-                    value={eventDraft.tag}
-                    onChange={(e) => updateEventDraft({ tag: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
-                  >
-                    <option value="Technology">Technology</option>
-                    <option value="Career">Career</option>
-                    <option value="Wellness">Wellness</option>
-                    <option value="Social">Social</option>
-                    <option value="Creative">Creative</option>
-                    <option value="Academic">Academic</option>
-                  </select>
+                  <div>
+                    <FieldLabel hint="Room / venue name">Location</FieldLabel>
+                    <input
+                      value={eventDraft.location}
+                      onChange={(e) =>
+                        updateEventDraft({ location: e.target.value })
+                      }
+                      placeholder="e.g. Block D, Lab 2"
+                      className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
+                    />
+                  </div>
 
-                  <textarea
-                    value={eventDraft.description}
-                    onChange={(e) =>
-                      updateEventDraft({ description: e.target.value })
-                    }
-                    placeholder="Description"
-                    rows={3}
-                    className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm resize-none"
-                  />
+                  <div>
+                    <FieldLabel hint="Used for Focus / Balance feed">
+                      Mode category
+                    </FieldLabel>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        {
+                          value: "focus",
+                          label: "Focus",
+                          desc: "Academic / skills",
+                        },
+                        {
+                          value: "balance",
+                          label: "Balance",
+                          desc: "Wellness / social",
+                        },
+                      ].map((option) => {
+                        const active = eventDraft.category === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() =>
+                              updateEventDraft({
+                                category: option.value,
+                                emoji: option.value === "focus" ? "📚" : "🌿",
+                              })
+                            }
+                            className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                              active
+                                ? option.value === "focus"
+                                  ? "border-taylor-red/50 bg-taylor-red/25 text-white"
+                                  : "border-teal-400/50 bg-teal-400/20 text-white"
+                                : option.value === "focus"
+                                  ? "border-rose-400/35 bg-rose-500/10 text-rose-50 hover:bg-rose-500/20"
+                                  : "border-teal-400/35 bg-teal-500/10 text-teal-50 hover:bg-teal-500/20"
+                            }`}
+                          >
+                            <p className="text-sm font-outfit font-semibold">
+                              {option.label}
+                            </p>
+                            <p className="mt-0.5 text-[10px] font-inter text-gray-300">
+                              {option.desc}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel hint="Max seats / people">
+                        Capacity
+                      </FieldLabel>
+                      <input
+                        type="number"
+                        min={1}
+                        value={eventDraft.capacity}
+                        onChange={(e) =>
+                          updateEventDraft({
+                            capacity: Number(e.target.value),
+                          })
+                        }
+                        placeholder="e.g. 50"
+                        className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel hint="Campus area">Zone</FieldLabel>
+                      <input
+                        value={eventDraft.zone}
+                        onChange={(e) =>
+                          updateEventDraft({ zone: e.target.value })
+                        }
+                        placeholder="e.g. Block D"
+                        className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <FieldLabel hint="Drives Interest % for student matching">
+                      Topic tag
+                    </FieldLabel>
+                    <p className="mb-2 text-[10px] font-inter text-gray-500">
+                      Tap a coloured chip — each topic is used in the Interest
+                      score formula on the student Home feed.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {EVENT_TAGS.map((tag) => {
+                        const active = eventDraft.tag === tag;
+                        const styles =
+                          TAG_CHIP_STYLES[tag] || TAG_CHIP_STYLES.Technology;
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => updateEventDraft({ tag })}
+                            className={`rounded-full border px-3.5 py-2 text-[11px] font-inter font-semibold transition-all ${
+                              active ? styles.active : styles.idle
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Description</FieldLabel>
+                    <textarea
+                      value={eventDraft.description}
+                      onChange={(e) =>
+                        updateEventDraft({ description: e.target.value })
+                      }
+                      placeholder="What students will do / learn"
+                      rows={3}
+                      className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white text-sm resize-none"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                    <p className="text-[10px] font-inter text-gray-400">
+                      Match preview (saved onto the event for student feed)
+                    </p>
+                    {(() => {
+                      const preview = buildBaselineMatchScores(eventDraft);
+                      const b = preview.match_breakdown;
+                      return (
+                        <>
+                          <p className="mt-1 text-sm font-outfit font-semibold text-white">
+                            {preview.match_score} overall match
+                          </p>
+                          <div className="mt-2 grid grid-cols-2 gap-1.5">
+                            <p className="text-[10px] font-inter text-emerald-300">
+                              Interest {b.interest}%{" "}
+                              <span className="text-gray-500">· topic tag</span>
+                            </p>
+                            <p className="text-[10px] font-inter text-blue-300">
+                              Schedule {b.schedule}%{" "}
+                              <span className="text-gray-500">· Focus/Balance</span>
+                            </p>
+                            <p className="text-[10px] font-inter text-amber-300">
+                              Proximity {b.proximity}%{" "}
+                              <span className="text-gray-500">· zone/location</span>
+                            </p>
+                            <p className="text-[10px] font-inter text-purple-300">
+                              Social {b.social}%{" "}
+                              <span className="text-gray-500">· capacity size</span>
+                            </p>
+                          </div>
+                          <p className="mt-2 text-[10px] font-inter text-gray-500">
+                            Formula: 40% Interest + 30% Schedule + 20% Proximity +
+                            10% Social. On Home, Interested / Not interested
+                            further personalises these % for each student.
+                          </p>
+                        </>
+                      );
+                    })()}
+                  </div>
 
                   <button
                     disabled={eventsLoading}
