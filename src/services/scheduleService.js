@@ -144,6 +144,51 @@ function toDatabaseTime(totalMinutes) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
 }
 
+/**
+ * Match SchedulePage weekend behaviour:
+ * Sat → show Friday, Sun → show Monday, else → today.
+ */
+export function getAcademicDayName(date = new Date()) {
+  const day = new Date(date).getDay(); // 0 Sun … 6 Sat
+  if (day === 6) return "Friday";
+  if (day === 0) return "Monday";
+  return new Date(date).toLocaleDateString("en-US", { weekday: "long" });
+}
+
+/**
+ * Home "Today's Schedule" ticker — same Supabase source as SchedulePage.
+ * Returns blocks shaped for Timetable.jsx: { id, time, subject, type, room, zone }.
+ */
+export async function getTodayScheduleBlocks({
+  studentId = null,
+  programme = "",
+  date = new Date(),
+} = {}) {
+  const dayName = getAcademicDayName(date);
+
+  const rows = await getStudentSchedule({ studentId, programme });
+  if (!rows.length) return [];
+
+  const weekly = addDetectedFreeSlots(groupScheduleByDay(rows));
+  const daySlots = weekly[dayName] || [];
+
+  return daySlots.map((slot) => ({
+    id: slot.id,
+    time: slot.time,
+    subject:
+      slot.type === "free"
+        ? slot.subject || "Free Slot Detected"
+        : slot.subject,
+    type: slot.type === "free" ? "free" : "class",
+    room: slot.room || null,
+    zone: slot.zone || null,
+    lecturer: slot.lecturer || null,
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    academicDay: dayName,
+  }));
+}
+
 export function addDetectedFreeSlots(weeklySchedule, dayStart = "00:00", dayEnd = "23:59") {
   const startBoundary = toMinutes(dayStart);
   const endBoundary = toMinutes(dayEnd);

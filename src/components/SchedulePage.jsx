@@ -520,22 +520,20 @@ export default function SchedulePage({
       </div>
 
       <div className="glass mb-5 rounded-2xl p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-outfit font-semibold text-white">
-            Upcoming RSVP Events
-          </h3>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-outfit font-semibold text-white">
+              Your RSVP Events
+            </h3>
 
-          <span className="shrink-0 text-[10px] font-inter text-gray-500">
+            <p className="mt-0.5 text-[10px] font-inter text-gray-500">
+              Events you registered for (upcoming and recent)
+            </p>
+          </div>
+
+          <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-inter text-gray-400">
             {upcomingRSVP.length} saved
           </span>
-        </div>
-
-        <div className="mt-3">
-          <p className="mt-0.5 text-[10px] font-inter text-gray-500">
-            {upcomingRSVP.length === 0 && !upcomingRSVPLoading
-              ? "No upcoming signups yet. Open an event and tap RSVP."
-              : ""}
-          </p>
         </div>
 
         {upcomingRSVPLoading ? (
@@ -543,7 +541,7 @@ export default function SchedulePage({
             <span className="mx-auto mb-2 block h-5 w-5 animate-spin rounded-full border-2 border-white/10 border-t-balance-accent" />
 
             <p className="text-[11px] font-inter text-gray-400">
-              Loading your upcoming RSVP events…
+              Loading your RSVP events…
             </p>
           </div>
         ) : upcomingRSVPError ? (
@@ -552,7 +550,16 @@ export default function SchedulePage({
               {upcomingRSVPError}
             </p>
           </div>
-        ) : upcomingRSVP.length === 0 ? null : (
+        ) : upcomingRSVP.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-center">
+            <p className="text-sm font-outfit font-semibold text-white">
+              No RSVP events yet
+            </p>
+            <p className="mt-1 text-[11px] font-inter text-gray-500">
+              Open an event and tap RSVP to save it here.
+            </p>
+          </div>
+        ) : (
           <div className="space-y-2">
             {upcomingRSVP.slice(0, 6).map((item) => (
               <motion.button
@@ -588,8 +595,14 @@ export default function SchedulePage({
                       {item.eventType === "club" ? "Club" : "Campus"}
                     </span>
 
-                    <span className="text-[9px] font-inter text-balance-accent">
-                      RSVP Confirmed
+                    <span
+                      className={`text-[9px] font-inter ${
+                        item.isPast
+                          ? "text-gray-500"
+                          : "text-balance-accent"
+                      }`}
+                    >
+                      {item.isPast ? "Past event" : "RSVP Confirmed"}
                     </span>
                   </div>
                 </div>

@@ -187,6 +187,19 @@ export async function registerForEvent({
     throw error;
   }
 
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("taylors-rsvp-updated", {
+        detail: {
+          action: "registered",
+          studentId,
+          eventId: String(eventId),
+          eventTitle: _eventTitle || null,
+        },
+      }),
+    );
+  }
+
   return data;
 }
 
@@ -217,6 +230,19 @@ export async function cancelEventRSVP({
   if (error) {
     console.error("Unable to cancel RSVP:", error);
     throw error;
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("taylors-rsvp-updated", {
+        detail: {
+          action: "cancelled",
+          studentId,
+          eventId: String(eventId),
+          eventTitle: _eventTitle || null,
+        },
+      }),
+    );
   }
 
   return data;
@@ -278,10 +304,6 @@ export async function getUpcomingRSVPEvents(studentId) {
 
       const eventDate = getCampusEventDate(relatedEvent);
 
-      if (!eventDate || eventDate < todayISO) {
-        return null;
-      }
-
       const eventStatus = String(
         relatedEvent.status || "",
       )
@@ -300,14 +322,22 @@ export async function getUpcomingRSVPEvents(studentId) {
         return null;
       }
 
-      return mapRSVPEvent(relatedEvent, rsvp);
+      const mapped = mapRSVPEvent(relatedEvent, rsvp);
+      if (!mapped) return null;
+
+      // Keep dated-past events visible so demo RSVPs still show up.
+      mapped.isPast = Boolean(eventDate && eventDate < todayISO);
+      mapped.isUndated = !eventDate;
+      return mapped;
     })
     .filter(Boolean)
-    .sort(
-      (eventA, eventB) =>
-        getEventTimestamp(eventA) -
-        getEventTimestamp(eventB),
-    );
+    .sort((eventA, eventB) => {
+      // Upcoming / undated first, then past.
+      const aPast = eventA.isPast ? 1 : 0;
+      const bPast = eventB.isPast ? 1 : 0;
+      if (aPast !== bPast) return aPast - bPast;
+      return getEventTimestamp(eventA) - getEventTimestamp(eventB);
+    });
 
   return upcomingEvents;
 }

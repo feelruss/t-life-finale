@@ -89,6 +89,7 @@ Recent activity: ${activitiesList || "None"}
 
 Write ONE personalized recommendation (2 short sentences max).
 Be practical and encouraging. Mention whether they should lean Focus or Balance next.
+Vary the wording so it feels freshly generated, not a template.
 Do not use markdown or bullet points.`;
 
   try {
@@ -101,8 +102,8 @@ Do not use markdown or bullet points.`;
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.55,
-        max_tokens: 120,
+        temperature: 0.75,
+        max_tokens: 140,
       }),
     });
 

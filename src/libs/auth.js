@@ -356,6 +356,7 @@ export async function sendPasswordReset(email) {
     throw new Error("Email is required.");
   }
 
+  // Land back on the app so LoginPage can show the "set new password" step.
   const redirectTo = `${window.location.origin}/`;
 
   const { error } =
@@ -369,6 +370,24 @@ export async function sendPasswordReset(email) {
   if (error) {
     throw error;
   }
+}
+
+export async function updatePassword(newPassword) {
+  const password = String(newPassword || "");
+
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.");
+  }
+
+  const { data, error } = await supabase.auth.updateUser({
+    password,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.user || null;
 }
 
 export async function signOutUser() {

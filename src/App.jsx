@@ -44,6 +44,7 @@ import {
   fetchTimetableSyncSetting,
   timetableSyncEventName,
 } from "./services/timetableSyncService";
+import { getTodayScheduleBlocks } from "./services/scheduleService";
 import {
   generateAIRecommendation,
   saveAIMeterHistory,
@@ -112,6 +113,8 @@ export default function App() {
     };
   });
   const [loadingRecommendation, setLoadingRecommendation] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState("");
+  const recommendationRequestIdRef = useRef(0);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventDetail, setShowEventDetail] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -121,6 +124,10 @@ export default function App() {
   );
   const [timetableSyncEnabled, setTimetableSyncEnabled] = useState(false);
   const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
+  const [homeTimetable, setHomeTimetable] = useState([]);
+  const [homeTimetableLoading, setHomeTimetableLoading] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const passwordRecoveryRef = useRef(false);
   const [rsvpEventIds, setRsvpEventIds] = useState(() =>
     getUserRSVPEventIds("guest"),
   );
@@ -281,8 +288,35 @@ export default function App() {
     initializeDB();
     let isMounted = true;
 
+    const isPasswordRecoveryUrl = () => {
+      if (typeof window === "undefined") return false;
+      const hash = String(window.location.hash || "").toLowerCase();
+      const search = String(window.location.search || "").toLowerCase();
+      return (
+        hash.includes("type=recovery") ||
+        search.includes("type=recovery") ||
+        hash.includes("type%3drecovery")
+      );
+    };
+
+    const enterPasswordRecovery = () => {
+      passwordRecoveryRef.current = true;
+      setPasswordRecovery(true);
+      setCurrentScreen("login");
+      // Clear tokens from the URL after Supabase has consumed them.
+      if (typeof window !== "undefined" && window.history?.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    };
+
     const restoreSession = async () => {
       try {
+        // Recovery email links can hydrate a session before PASSWORD_RECOVERY fires.
+        if (isPasswordRecoveryUrl()) {
+          enterPasswordRecovery();
+          return;
+        }
+
         const {
           data: { session },
           error,
@@ -297,6 +331,11 @@ export default function App() {
           if (isMounted) {
             setCurrentScreen("landing");
           }
+          return;
+        }
+
+        if (passwordRecoveryRef.current) {
+          setCurrentScreen("login");
           return;
         }
 
@@ -330,6 +369,12 @@ export default function App() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
 
+      // Email reset link lands here — show "set new password" before full app entry.
+      if (event === "PASSWORD_RECOVERY" || isPasswordRecoveryUrl()) {
+        enterPasswordRecovery();
+        return;
+      }
+
       /*
        * restoreSession() already handles the initial session.
        * Ignoring INITIAL_SESSION prevents competing screen changes
@@ -344,6 +389,8 @@ export default function App() {
           userId: null,
           promise: null,
         };
+        passwordRecoveryRef.current = false;
+        setPasswordRecovery(false);
         setUserRole("student");
         setDisplayName("Student");
         setCurrentEmail("");
@@ -356,6 +403,11 @@ export default function App() {
         return;
       }
       if (event !== "SIGNED_IN" && event !== "USER_UPDATED") {
+        return;
+      }
+
+      // Stay on reset form until the new password is saved.
+      if (passwordRecoveryRef.current) {
         return;
       }
 
@@ -465,6 +517,46 @@ export default function App() {
     };
   }, [currentUserKey]);
 
+  // Keep Home ticker on the same Supabase timetable as Schedule → Academic Timeline.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHomeTimetable = async () => {
+      if (
+        !timetableSyncEnabled ||
+        !currentUserKey ||
+        currentUserKey === "guest"
+      ) {
+        if (!cancelled) {
+          setHomeTimetable([]);
+          setHomeTimetableLoading(false);
+        }
+        return;
+      }
+
+      setHomeTimetableLoading(true);
+
+      try {
+        const blocks = await getTodayScheduleBlocks({
+          studentId: currentUserKey,
+          programme: currentProgramme,
+        });
+        if (!cancelled) setHomeTimetable(Array.isArray(blocks) ? blocks : []);
+      } catch (error) {
+        console.error("Unable to load home timetable from Supabase:", error);
+        if (!cancelled) setHomeTimetable([]);
+      } finally {
+        if (!cancelled) setHomeTimetableLoading(false);
+      }
+    };
+
+    void loadHomeTimetable();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserKey, currentProgramme, timetableSyncEnabled]);
+
   useEffect(() => {
     const handleTimetableSyncUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
@@ -538,10 +630,28 @@ export default function App() {
 
   const refreshRecommendation = useCallback(
     async ({ useAI = true } = {}) => {
+      const requestId = ++recommendationRequestIdRef.current;
       setLoadingRecommendation(true);
+      if (useAI) setRefreshStatus("Updating…");
 
       try {
-        const current = getAIMeterState(currentUserKey);
+        // Pull latest scores from cloud history, then local meter.
+        let current = getAIMeterState(currentUserKey);
+        if (useAI && currentUserKey && currentUserKey !== "guest") {
+          const history = await fetchLatestAIMeterHistory(currentUserKey);
+          if (history && recommendationRequestIdRef.current === requestId) {
+            const focusScore = Number(history.focus_score);
+            const balanceScore = Number(history.balance_score);
+            if (Number.isFinite(focusScore) && Number.isFinite(balanceScore)) {
+              current = {
+                ...current,
+                focusScore,
+                balanceScore,
+              };
+            }
+          }
+        }
+
         let recommendation = buildRecommendationFromScores({
           focusScore: current.focusScore,
           balanceScore: current.balanceScore,
@@ -555,11 +665,18 @@ export default function App() {
             focusScore: current.focusScore,
             balanceScore: current.balanceScore,
             displayName,
-            recentActivities: [],
+            recentActivities: [
+              `Mode: ${mode}`,
+              `Focus ${current.focusScore}%`,
+              `Wellness ${current.balanceScore}%`,
+              `Refresh at ${new Date().toLocaleTimeString()}`,
+            ],
           });
           recommendation = aiResult.recommendation;
           source = aiResult.source;
         }
+
+        if (recommendationRequestIdRef.current !== requestId) return;
 
         const next = setAIMeterState(
           {
@@ -570,8 +687,15 @@ export default function App() {
           currentUserKey,
         );
         setAiMeter(next);
+        if (useAI) {
+          setRefreshStatus(
+            source === "groq"
+              ? `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : "Updated (offline rules)",
+          );
+        }
 
-        if (currentUserKey && currentUserKey !== "guest") {
+        if (useAI && currentUserKey && currentUserKey !== "guest") {
           saveAIMeterHistory({
             userId: currentUserKey,
             mode,
@@ -580,8 +704,13 @@ export default function App() {
             recommendation: next.recommendation,
           }).catch(() => {});
         }
+      } catch (error) {
+        console.warn("Refresh recommendation failed:", error);
+        if (useAI) setRefreshStatus("Refresh failed — try again");
       } finally {
-        setLoadingRecommendation(false);
+        if (recommendationRequestIdRef.current === requestId) {
+          setLoadingRecommendation(false);
+        }
       }
     },
     [currentUserKey, displayName, mode],
@@ -590,7 +719,7 @@ export default function App() {
   useEffect(() => {
     // Mode switches use fast local rules; Refresh button uses full Groq AI.
     refreshRecommendation({ useAI: false });
-  }, [mode, currentUserKey]);
+  }, [mode, currentUserKey, refreshRecommendation]);
 
   // Mode toggle removed from global scope; it's now scoped to Profile page only.
 
@@ -811,7 +940,9 @@ export default function App() {
   };
 
   const handleRSVP = (event) => {
-    if (!event?.id && !event?.sourceEventId && !event?.eventId) return;
+    if (!event?.id && !event?.sourceEventId && !event?.eventId) {
+      return { isRSVPd: Boolean(event?.isRSVPd) };
+    }
 
     const result = toggleEventRSVP({
       event,
@@ -931,6 +1062,8 @@ export default function App() {
         );
       }
     }
+
+    return { isRSVPd: result.status === "added" };
   };
 
   const registerOrCancelCloudRSVP = ({
@@ -971,9 +1104,8 @@ export default function App() {
   ];
 
   const isDarkTheme = true;
-  const activeDailyTimetable = timetableSyncEnabled
-    ? timetableProfile.today
-    : [];
+  // Prefer live Supabase day schedule so Home matches Schedule tab.
+  const activeDailyTimetable = timetableSyncEnabled ? homeTimetable : [];
 
   return (
     <div
@@ -1055,7 +1187,30 @@ export default function App() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
             >
               <LoginPage
+                passwordRecovery={passwordRecovery}
+                onPasswordUpdated={async () => {
+                  passwordRecoveryRef.current = false;
+                  setPasswordRecovery(false);
+                  try {
+                    const {
+                      data: { user: authUser },
+                    } = await supabase.auth.getUser();
+                    if (!authUser) {
+                      setCurrentScreen("login");
+                      return;
+                    }
+                    const profile = await loadAuthenticatedProfile(authUser);
+                    if (profile) {
+                      applyAuthenticatedUser(profile, { resetTab: true });
+                    }
+                  } catch (error) {
+                    console.error("Post-reset login failed:", error);
+                    setCurrentScreen("login");
+                  }
+                }}
                 onLogin={({ user }) => {
+                  passwordRecoveryRef.current = false;
+                  setPasswordRecovery(false);
                   applyAuthenticatedUser(user, { resetTab: true });
                 }}
               />
@@ -1176,6 +1331,8 @@ export default function App() {
                       <Timetable
                         mode={mode}
                         timetableData={activeDailyTimetable}
+                        loading={homeTimetableLoading || timetableSyncLoading}
+                        syncEnabled={timetableSyncEnabled}
                       />
 
                       <div className="mt-3 px-5 pb-2">
@@ -1196,6 +1353,8 @@ export default function App() {
                           focusScore={aiMeter.focusScore}
                           balanceScore={aiMeter.balanceScore}
                           recommendation={aiMeter.recommendation}
+                          recommendationSource={aiMeter.recommendationSource}
+                          refreshStatus={refreshStatus}
                           loadingRecommendation={loadingRecommendation}
                           onRefreshRecommendation={() =>
                             refreshRecommendation({ useAI: true })
@@ -1207,7 +1366,6 @@ export default function App() {
 
                       <EventFeed
                         mode={mode}
-                        onCheckIn={handleCheckIn}
                         onEventClick={handleEventClick}
                         userKey={currentUserKey}
                       />

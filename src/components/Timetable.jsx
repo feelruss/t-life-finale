@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
-import { timetable } from "../data/events";
 
 function ScheduleCard({ block, isFocus }) {
   const [startTime = "", endTime = ""] = String(block.time || "").split(" - ");
@@ -50,7 +49,7 @@ function ScheduleCard({ block, isFocus }) {
             <span className="relative inline-flex rounded-full h-2 w-2 bg-balance-accent" />
           </span>
           <p className="text-[10px] font-inter text-balance-accent/90">
-            Searching...
+            Open time
           </p>
         </div>
       )}
@@ -58,23 +57,32 @@ function ScheduleCard({ block, isFocus }) {
   );
 }
 
-export default function Timetable({ mode = "focus", timetableData = timetable }) {
+export default function Timetable({
+  mode = "focus",
+  timetableData = [],
+  loading = false,
+  syncEnabled = true,
+}) {
   const isFocus = mode === "focus";
   const [paused, setPaused] = useState(false);
 
-  const currentDateLabel = useMemo(
-    () =>
-      new Date().toLocaleDateString("en-US", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-      }),
-    [],
-  );
+  const currentDateLabel = useMemo(() => {
+    const now = new Date();
+    const label = now.toLocaleDateString("en-US", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+    const academicDay = timetableData?.[0]?.academicDay;
+    const todayName = now.toLocaleDateString("en-US", { weekday: "long" });
+    if (academicDay && academicDay !== todayName) {
+      return `${label} · showing ${academicDay.slice(0, 3)}`;
+    }
+    return label;
+  }, [timetableData]);
 
   const blocks = Array.isArray(timetableData) ? timetableData : [];
-  // Duplicate track so the news-crawl loops without a jump.
-  const tickerBlocks = [...blocks, ...blocks];
+  const tickerBlocks = blocks.length > 0 ? [...blocks, ...blocks] : [];
   const durationSec = Math.max(18, blocks.length * 5);
 
   return (
@@ -88,73 +96,94 @@ export default function Timetable({ mode = "focus", timetableData = timetable })
           : "bg-[#081916]/90 border-b border-balance-accent/20"
       }`}
     >
-      <div className="flex items-center justify-between mb-2.5">
+      <div className="mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div
-            className={`w-1.5 h-1.5 rounded-full ${isFocus ? "bg-taylor-red" : "bg-balance-accent"}`}
+            className={`h-1.5 w-1.5 rounded-full ${isFocus ? "bg-taylor-red" : "bg-balance-accent"}`}
           />
           <p
-            className={`text-[11px] font-inter font-medium uppercase tracking-widest ${
+            className={`font-inter text-[11px] font-medium uppercase tracking-widest ${
               isFocus ? "text-red-100" : "text-teal-100"
             }`}
           >
             Today&apos;s Schedule
           </p>
           <span
-            className={`rounded-full px-2 py-0.5 text-[9px] font-inter uppercase tracking-wider ${
+            className={`rounded-full px-2 py-0.5 font-inter text-[9px] uppercase tracking-wider ${
               isFocus
                 ? "bg-taylor-red/20 text-red-200"
                 : "bg-balance-accent/15 text-teal-200"
             }`}
           >
-            Live crawl
+            {syncEnabled ? "Synced" : "Offline"}
           </span>
         </div>
         <p
           className={
             isFocus
-              ? "text-[11px] font-inter text-red-200"
-              : "text-[11px] font-inter text-teal-200"
+              ? "font-inter text-[11px] text-red-200"
+              : "font-inter text-[11px] text-teal-200"
           }
         >
           {currentDateLabel}
         </p>
       </div>
 
-      {/* Continuous TV news-line ticker */}
-      <div
-        className="schedule-ticker relative overflow-hidden pb-1"
-        onPointerEnter={() => setPaused(true)}
-        onPointerLeave={() => setPaused(false)}
-        onTouchStart={() => setPaused(true)}
-        onTouchEnd={() => setPaused(false)}
-      >
+      {loading ? (
         <div
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r ${
-            isFocus ? "from-[#2a090f]" : "from-[#081916]"
-          } to-transparent`}
-        />
-        <div
-          aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l ${
-            isFocus ? "from-[#2a090f]" : "from-[#081916]"
-          } to-transparent`}
-        />
-
-        <div
-          className={`schedule-ticker-track flex w-max gap-2.5 ${paused ? "is-paused" : ""}`}
-          style={{ "--ticker-duration": `${durationSec}s` }}
+          className={`rounded-xl px-4 py-3 text-xs font-inter ${
+            isFocus ? "text-red-100/80" : "text-teal-100/80"
+          }`}
         >
-          {tickerBlocks.map((block, index) => (
-            <ScheduleCard
-              key={`${block.id}-${index}`}
-              block={block}
-              isFocus={isFocus}
-            />
-          ))}
+          Loading your academic timetable…
         </div>
-      </div>
+      ) : blocks.length === 0 ? (
+        <div
+          className={`rounded-xl border px-4 py-3 text-xs font-inter ${
+            isFocus
+              ? "border-taylor-red/20 bg-taylor-red/10 text-red-100"
+              : "border-balance-accent/20 bg-balance-accent/10 text-teal-100"
+          }`}
+        >
+          {syncEnabled
+            ? "No classes listed for today. Open Schedule to browse other days."
+            : "Turn on Timetable Sync in Profile to show your real classes here."}
+        </div>
+      ) : (
+        <div
+          className="schedule-ticker relative overflow-hidden pb-1"
+          onPointerEnter={() => setPaused(true)}
+          onPointerLeave={() => setPaused(false)}
+          onTouchStart={() => setPaused(true)}
+          onTouchEnd={() => setPaused(false)}
+        >
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r ${
+              isFocus ? "from-[#2a090f]" : "from-[#081916]"
+            } to-transparent`}
+          />
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l ${
+              isFocus ? "from-[#2a090f]" : "from-[#081916]"
+            } to-transparent`}
+          />
+
+          <div
+            className={`schedule-ticker-track flex w-max gap-2.5 ${paused ? "is-paused" : ""}`}
+            style={{ "--ticker-duration": `${durationSec}s` }}
+          >
+            {tickerBlocks.map((block, index) => (
+              <ScheduleCard
+                key={`${block.id}-${index}`}
+                block={block}
+                isFocus={isFocus}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

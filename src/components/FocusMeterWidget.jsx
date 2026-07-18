@@ -1,75 +1,116 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Activity, Brain, Zap } from 'lucide-react';
+import React from "react";
+import { motion } from "framer-motion";
+import { Activity, Brain, Zap } from "lucide-react";
 
 export default function FocusMeterWidget({
-    currentMode,
-    focusScore = 0,
-    balanceScore = 0,
-    recommendation = 'Keep checking in to events to improve your meter trends.',
-    loadingRecommendation = false,
-    onRefreshRecommendation,
+  currentMode,
+  focusScore = 0,
+  balanceScore = 0,
+  recommendation = "Keep checking in to events to improve your meter trends.",
+  loadingRecommendation = false,
+  recommendationSource = "",
+  refreshStatus = "",
+  onRefreshRecommendation,
 }) {
+  const handleRefresh = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (loadingRecommendation) return;
+    onRefreshRecommendation?.();
+  };
 
-    return (
-        <motion.div
-            className="glass rounded-2xl p-5 w-full mt-4 border border-white/10"
-            animate={{ y: [0, -6, 0] }}
-            transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+  return (
+    <div className="float-module glass relative z-20 rounded-2xl border border-white/10 p-5 w-full mt-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 font-outfit font-bold text-white">
+          <Brain
+            className={currentMode === "focus" ? "text-red-200" : "text-teal-200"}
+            size={20}
+          />
+          <span>AI Status Meter</span>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={loadingRecommendation}
+          className={`relative z-30 shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-wait disabled:opacity-50 ${
+            currentMode === "focus"
+              ? "bg-taylor-red/20 text-red-100 hover:bg-taylor-red/30 hover:text-white"
+              : "bg-teal-400/15 text-teal-100 hover:bg-teal-400/25 hover:text-white"
+          }`}
         >
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-white font-bold font-outfit">
-                    <Brain className={currentMode === 'focus' ? 'text-red-200' : 'text-teal-200'} size={20} />
-                    <span>AI Status Meter</span>
-                </div>
-                <button 
-                    onClick={onRefreshRecommendation}
-                    disabled={loadingRecommendation}
-                    className={currentMode === 'focus' ? 'text-xs text-red-200 hover:text-white transition-colors disabled:opacity-50' : 'text-xs text-teal-200 hover:text-white transition-colors disabled:opacity-50'}
-                >
-                    {loadingRecommendation ? 'Analyzing...' : 'Refresh'}
-                </button>
-            </div>
+          {loadingRecommendation ? "Analyzing…" : "Refresh"}
+        </button>
+      </div>
 
-                <div className="space-y-4">
-                    {/* Focus Bar */}
-                    <div>
-                        <div className="flex justify-between text-xs font-inter mb-1">
-                            <span className={currentMode === 'focus' ? 'text-red-100 flex items-center gap-1' : 'text-teal-100 flex items-center gap-1'}><Zap size={12}/> Focus</span>
-                            <span className="text-taylor-red font-bold">{focusScore}%</span>
-                        </div>
-                        <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden">
-                            <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${focusScore}%` }}
-                                transition={{ duration: 1 }}
-                                className="bg-gradient-to-r from-red-600 to-red-500 h-full"
-                            />
-                        </div>
-                    </div>
+      <div className="space-y-4">
+        <div>
+          <div className="mb-1 flex justify-between font-inter text-xs">
+            <span
+              className={
+                currentMode === "focus"
+                  ? "flex items-center gap-1 text-red-100"
+                  : "flex items-center gap-1 text-teal-100"
+              }
+            >
+              <Zap size={12} /> Focus
+            </span>
+            <span className="font-bold text-taylor-red">{focusScore}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${focusScore}%` }}
+              transition={{ duration: 1 }}
+              className="h-full bg-gradient-to-r from-red-600 to-red-500"
+            />
+          </div>
+        </div>
 
-                    {/* Balance Bar */}
-                    <div>
-                        <div className="flex justify-between text-xs font-inter mb-1">
-                            <span className={currentMode === 'focus' ? 'text-red-100 flex items-center gap-1' : 'text-teal-100 flex items-center gap-1'}><Activity size={12}/> Wellness</span>
-                            <span className="text-teal-400 font-bold">{balanceScore}%</span>
-                        </div>
-                        <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden">
-                            <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${balanceScore}%` }}
-                                transition={{ duration: 1, delay: 0.2 }}
-                                className="bg-gradient-to-r from-teal-500 to-emerald-400 h-full"
-                            />
-                        </div>
-                    </div>
+        <div>
+          <div className="mb-1 flex justify-between font-inter text-xs">
+            <span
+              className={
+                currentMode === "focus"
+                  ? "flex items-center gap-1 text-red-100"
+                  : "flex items-center gap-1 text-teal-100"
+              }
+            >
+              <Activity size={12} /> Wellness
+            </span>
+            <span className="font-bold text-teal-400">{balanceScore}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${balanceScore}%` }}
+              transition={{ duration: 1, delay: 0.2 }}
+              className="h-full bg-gradient-to-r from-teal-500 to-emerald-400"
+            />
+          </div>
+        </div>
 
-                    {/* AI Recommendation */}
-                    <div className={currentMode === 'focus' ? 'bg-white/5 border border-red-500/20 rounded-xl p-3 text-xs text-red-50 font-inter mt-4 leading-relaxed' : 'bg-white/5 border border-teal-500/20 rounded-xl p-3 text-xs text-teal-50 font-inter mt-4 leading-relaxed'}>
-                        <span className="text-white font-semibold">AI Recommendation: </span>
-                        {loadingRecommendation ? 'Analyzing your Focus & Wellness scores…' : recommendation}
-                    </div>
-                </div>
-        </motion.div>
-    );
+        <div
+          className={
+            currentMode === "focus"
+              ? "mt-4 rounded-xl border border-red-500/20 bg-white/5 p-3 font-inter text-xs leading-relaxed text-red-50"
+              : "mt-4 rounded-xl border border-teal-500/20 bg-white/5 p-3 font-inter text-xs leading-relaxed text-teal-50"
+          }
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-semibold text-white">AI Recommendation</span>
+            {(refreshStatus || recommendationSource) && (
+              <span className="text-[10px] uppercase tracking-wider text-white/50">
+                {refreshStatus ||
+                  (recommendationSource === "groq" ? "Live AI" : "Rules")}
+              </span>
+            )}
+          </div>
+          {loadingRecommendation
+            ? "Analyzing your Focus & Wellness scores…"
+            : recommendation}
+        </div>
+      </div>
+    </div>
+  );
 }
