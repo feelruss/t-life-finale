@@ -11,7 +11,6 @@ import {
   getEventPreferences,
   setEventHidden,
   setEventInterested,
-  getEventCheckIns,
 } from "../data/db";
 import { fetchCampusEvents } from "../services/campusEventsService";
 
@@ -25,7 +24,6 @@ const iconMap = {
 
 export default function EventFeed({
   mode,
-  onCheckIn,
   onEventClick,
   userKey = "guest",
 }) {
@@ -37,15 +35,11 @@ export default function EventFeed({
   const [preferences, setPreferences] = useState(() =>
     getEventPreferences(userKey),
   );
-  const [checkIns, setCheckIns] = useState(() => getEventCheckIns(userKey));
   const [lastHidden, setLastHidden] = useState(null);
   const [undoTimer, setUndoTimer] = useState(null);
   const isFocus = category === "focus";
   const hiddenEvents = preferences.hidden || [];
   const interestedEvents = preferences.interested || [];
-  const checkedEventIds = new Set(
-    checkIns.map((entry) => String(entry.eventId)),
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -76,18 +70,13 @@ export default function EventFeed({
 
   useEffect(() => {
     setPreferences(getEventPreferences(userKey));
-    setCheckIns(getEventCheckIns(userKey));
   }, [userKey]);
 
   useEffect(() => {
     const onDataUpdate = (evt) => {
       const updatedKey = String(evt?.detail?.key || "");
-      if (
-        updatedKey.startsWith("taylors_event_preferences") ||
-        updatedKey.startsWith("taylors_event_checkins")
-      ) {
+      if (updatedKey.startsWith("taylors_event_preferences")) {
         setPreferences(getEventPreferences(userKey));
-        setCheckIns(getEventCheckIns(userKey));
       }
     };
 
@@ -253,12 +242,8 @@ export default function EventFeed({
                   <div className="p-4 pl-5">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span
-                          className={`text-[10px] font-inter font-bold px-2 py-0.5 rounded border ${checkedEventIds.has(String(event.id)) ? "bg-amber-500/15 text-amber-300 border-amber-400/30" : "bg-white/5 text-gray-400 border-white/10"}`}
-                        >
-                          {checkedEventIds.has(String(event.id))
-                            ? "Checked In"
-                            : "Not Checked In"}
+                        <span className="text-[10px] font-inter font-bold px-2 py-0.5 rounded border bg-white/5 text-gray-400 border-white/10">
+                          Tap for RSVP
                         </span>
                         <span className="text-[10px] font-inter font-bold bg-gray-700/50 text-green-400 px-2 py-0.5 rounded border border-green-500/20">
                           {math.score}% Match
@@ -320,57 +305,36 @@ export default function EventFeed({
                       </div>
                     </div>
 
-                    <div className="flex items-stretch justify-between border-t border-white/5 pt-3 mt-1 gap-3">
+                    <div className="flex items-stretch justify-end border-t border-white/5 pt-3 mt-1 gap-2">
                       <button
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-colors flex items-center gap-1.5 border active:scale-95 ${
-                          checkedEventIds.has(String(event.id))
-                            ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-400/30"
-                            : "bg-white/10 hover:bg-white/20 text-white border-white/5"
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-colors border active:scale-95 ${
+                          interestedEvents.some(
+                            (id) => String(id) === String(event.id),
+                          )
+                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/30"
+                            : "bg-white/10 hover:bg-white/20 text-gray-200 border-white/5"
                         }`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onCheckIn?.(event);
+                          handleToggleInterested(event.id);
                         }}
                       >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${checkedEventIds.has(String(event.id)) ? "bg-amber-300" : "bg-green-400 animate-pulse"}`}
-                        ></span>
-                        {checkedEventIds.has(String(event.id))
-                          ? "Uncheck-in"
-                          : "Check-in"}
+                        {interestedEvents.some(
+                          (id) => String(id) === String(event.id),
+                        )
+                          ? "Interested ✓"
+                          : "Interested"}
                       </button>
 
-                      <div className="flex flex-col items-end gap-1">
-                        <button
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-colors border active:scale-95 ${
-                            interestedEvents.some(
-                              (id) => String(id) === String(event.id),
-                            )
-                              ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/30"
-                              : "bg-white/10 hover:bg-white/20 text-gray-200 border-white/5"
-                          }`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleInterested(event.id);
-                          }}
-                        >
-                          {interestedEvents.some(
-                            (id) => String(id) === String(event.id),
-                          )
-                            ? "Interested ✓"
-                            : "Interested"}
-                        </button>
-
-                        <button
-                          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-gray-200 transition-colors border border-white/5 active:scale-95"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleNotInterested(event.id);
-                          }}
-                        >
-                          Not interested
-                        </button>
-                      </div>
+                      <button
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-gray-200 transition-colors border border-white/5 active:scale-95"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleNotInterested(event.id);
+                        }}
+                      >
+                        Not interested
+                      </button>
                     </div>
                   </div>
 

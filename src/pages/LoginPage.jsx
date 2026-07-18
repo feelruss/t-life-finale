@@ -1,5 +1,5 @@
 // This is the src/pages/LoginPage.jsx file
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Lock,
@@ -17,10 +17,13 @@ import {
   signInWithPassword,
   signUpStudent,
   sendPasswordReset,
+  updatePassword,
 } from "../libs/auth";
 
-const LoginPage = ({ onLogin }) => {
-  const [authView, setAuthView] = useState("signin"); // 'signin' | 'signup' | 'forgot'
+const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => {
+  const [authView, setAuthView] = useState(
+    passwordRecovery ? "reset" : "signin",
+  ); // 'signin' | 'signup' | 'forgot' | 'reset'
 
   // Sign In State
   const [email, setEmail] = useState("");
@@ -48,9 +51,20 @@ const LoginPage = ({ onLogin }) => {
   ];
 
   const [forgotEmail, setForgotEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [isSigningIn, setIsSigningIn] = useState(false);
+
+  useEffect(() => {
+    if (passwordRecovery) {
+      setAuthView("reset");
+      setError("");
+      setSuccessMsg("Reset link verified. Choose a new password below.");
+    }
+  }, [passwordRecovery]);
 
   const handleSignIn = async (e) => {
     e.preventDefault();
@@ -154,11 +168,41 @@ const LoginPage = ({ onLogin }) => {
     try {
       await sendPasswordReset(normalizedEmail);
       setSuccessMsg(
-        "Password reset instructions have been sent if the account exists.",
+        "Check your email, open the reset link, then you’ll set a new password on this screen.",
       );
     } catch (err) {
       console.error("Password reset failed:", err);
       setError(err.message || "Unable to send password reset instructions.");
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMsg("");
+
+    if (newPassword.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    try {
+      await updatePassword(newPassword);
+      setSuccessMsg("Password updated. Signing you in…");
+      setNewPassword("");
+      setConfirmPassword("");
+      onPasswordUpdated?.();
+    } catch (err) {
+      console.error("Password update failed:", err);
+      setError(
+        err.message ||
+          "Unable to update password. Request a new reset link and try again.",
+      );
     }
   };
 
@@ -458,6 +502,79 @@ const LoginPage = ({ onLogin }) => {
                 Create Student Account
               </button>
             </motion.form>
+          ) : authView === "reset" ? (
+            <motion.form
+              key="reset"
+              initial={{ x: 0, opacity: 0, y: 20 }}
+              animate={{ x: 0, opacity: 1, y: 0 }}
+              exit={{ x: 0, opacity: 0, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="w-full space-y-4 mb-8"
+              onSubmit={handleResetPassword}
+            >
+              <div className="space-y-1 text-sm text-gray-300">
+                <p className="text-white font-semibold">Set new password</p>
+                <p className="text-gray-400">
+                  Step 2 of 2 — choose a new campus password for your account.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-inter text-gray-400 ml-1">
+                  New Password
+                </label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                    size={18}
+                  />
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-12 text-sm focus:outline-none focus:border-taylor-red/50 text-white transition-colors"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+                  >
+                    {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-inter text-gray-400 ml-1">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <Key
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
+                    size={18}
+                  />
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:border-taylor-red/50 text-white transition-colors"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    minLength={6}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 mt-2 bg-taylor-red hover:bg-taylor-red-light text-white rounded-xl font-bold text-sm transition-colors shadow-glow-red"
+              >
+                Save new password
+              </button>
+            </motion.form>
           ) : (
             <motion.form
               key="forgot"
@@ -471,7 +588,8 @@ const LoginPage = ({ onLogin }) => {
               <div className="space-y-1 text-sm text-gray-300">
                 <p className="text-white font-semibold">Forgot Password</p>
                 <p className="text-gray-400">
-                  Enter your campus email and we’ll send reset instructions.
+                  Step 1 — enter your campus email. We’ll email a reset link.
+                  After you open that link, you’ll set a new password here.
                 </p>
               </div>
               <div className="space-y-1">

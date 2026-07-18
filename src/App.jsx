@@ -126,6 +126,8 @@ export default function App() {
   const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
   const [homeTimetable, setHomeTimetable] = useState([]);
   const [homeTimetableLoading, setHomeTimetableLoading] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const passwordRecoveryRef = useRef(false);
   const [rsvpEventIds, setRsvpEventIds] = useState(() =>
     getUserRSVPEventIds("guest"),
   );
@@ -286,8 +288,35 @@ export default function App() {
     initializeDB();
     let isMounted = true;
 
+    const isPasswordRecoveryUrl = () => {
+      if (typeof window === "undefined") return false;
+      const hash = String(window.location.hash || "").toLowerCase();
+      const search = String(window.location.search || "").toLowerCase();
+      return (
+        hash.includes("type=recovery") ||
+        search.includes("type=recovery") ||
+        hash.includes("type%3drecovery")
+      );
+    };
+
+    const enterPasswordRecovery = () => {
+      passwordRecoveryRef.current = true;
+      setPasswordRecovery(true);
+      setCurrentScreen("login");
+      // Clear tokens from the URL after Supabase has consumed them.
+      if (typeof window !== "undefined" && window.history?.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    };
+
     const restoreSession = async () => {
       try {
+        // Recovery email links can hydrate a session before PASSWORD_RECOVERY fires.
+        if (isPasswordRecoveryUrl()) {
+          enterPasswordRecovery();
+          return;
+        }
+
         const {
           data: { session },
           error,
@@ -302,6 +331,11 @@ export default function App() {
           if (isMounted) {
             setCurrentScreen("landing");
           }
+          return;
+        }
+
+        if (passwordRecoveryRef.current) {
+          setCurrentScreen("login");
           return;
         }
 
@@ -335,6 +369,12 @@ export default function App() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
 
+      // Email reset link lands here — show "set new password" before full app entry.
+      if (event === "PASSWORD_RECOVERY" || isPasswordRecoveryUrl()) {
+        enterPasswordRecovery();
+        return;
+      }
+
       /*
        * restoreSession() already handles the initial session.
        * Ignoring INITIAL_SESSION prevents competing screen changes
@@ -349,6 +389,8 @@ export default function App() {
           userId: null,
           promise: null,
         };
+        passwordRecoveryRef.current = false;
+        setPasswordRecovery(false);
         setUserRole("student");
         setDisplayName("Student");
         setCurrentEmail("");
@@ -361,6 +403,11 @@ export default function App() {
         return;
       }
       if (event !== "SIGNED_IN" && event !== "USER_UPDATED") {
+        return;
+      }
+
+      // Stay on reset form until the new password is saved.
+      if (passwordRecoveryRef.current) {
         return;
       }
 
@@ -893,7 +940,9 @@ export default function App() {
   };
 
   const handleRSVP = (event) => {
-    if (!event?.id && !event?.sourceEventId && !event?.eventId) return;
+    if (!event?.id && !event?.sourceEventId && !event?.eventId) {
+      return { isRSVPd: Boolean(event?.isRSVPd) };
+    }
 
     const result = toggleEventRSVP({
       event,
@@ -1013,6 +1062,8 @@ export default function App() {
         );
       }
     }
+
+    return { isRSVPd: result.status === "added" };
   };
 
   const registerOrCancelCloudRSVP = ({
@@ -1136,7 +1187,30 @@ export default function App() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
             >
               <LoginPage
+                passwordRecovery={passwordRecovery}
+                onPasswordUpdated={async () => {
+                  passwordRecoveryRef.current = false;
+                  setPasswordRecovery(false);
+                  try {
+                    const {
+                      data: { user: authUser },
+                    } = await supabase.auth.getUser();
+                    if (!authUser) {
+                      setCurrentScreen("login");
+                      return;
+                    }
+                    const profile = await loadAuthenticatedProfile(authUser);
+                    if (profile) {
+                      applyAuthenticatedUser(profile, { resetTab: true });
+                    }
+                  } catch (error) {
+                    console.error("Post-reset login failed:", error);
+                    setCurrentScreen("login");
+                  }
+                }}
                 onLogin={({ user }) => {
+                  passwordRecoveryRef.current = false;
+                  setPasswordRecovery(false);
                   applyAuthenticatedUser(user, { resetTab: true });
                 }}
               />
@@ -1292,7 +1366,6 @@ export default function App() {
 
                       <EventFeed
                         mode={mode}
-                        onCheckIn={handleCheckIn}
                         onEventClick={handleEventClick}
                         userKey={currentUserKey}
                       />

@@ -101,6 +101,11 @@ export default function EventDetailModal({
     onCheckIn?.(event);
   };
 
+  // Check-in is only for arrival at the event (same calendar day), not for browsing suggestions.
+  const eventDateISO = String(event.date || event.event_date || "").slice(0, 10);
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const canCheckIn = Boolean(eventDateISO && eventDateISO === todayISO);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -336,17 +341,24 @@ export default function EventDetailModal({
                           : "🚀 RSVP Now"}
                   </motion.button>
 
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleCheckIn}
-                    className="glass flex items-center gap-2 rounded-xl px-4 py-3.5 transition-colors hover:bg-white/10"
-                  >
-                    <span className="text-xs font-outfit font-semibold text-gray-300">
-                      Check-in
-                    </span>
-                  </motion.button>
+                  {canCheckIn && (
+                    <motion.button
+                      type="button"
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleCheckIn}
+                      className="glass flex items-center gap-2 rounded-xl px-4 py-3.5 transition-colors hover:bg-white/10"
+                    >
+                      <span className="text-xs font-outfit font-semibold text-gray-300">
+                        Check-in
+                      </span>
+                    </motion.button>
+                  )}
                 </div>
+                {!canCheckIn && (
+                  <p className="pb-4 text-center text-[10px] font-inter text-gray-500">
+                    Check-in unlocks on the event day when you arrive.
+                  </p>
+                )}
               </div>
             </div>
           </motion.div>
