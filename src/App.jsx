@@ -44,6 +44,7 @@ import {
   fetchTimetableSyncSetting,
   timetableSyncEventName,
 } from "./services/timetableSyncService";
+import { getTodayScheduleBlocks } from "./services/scheduleService";
 import {
   generateAIRecommendation,
   saveAIMeterHistory,
@@ -112,6 +113,8 @@ export default function App() {
     };
   });
   const [loadingRecommendation, setLoadingRecommendation] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState("");
+  const recommendationRequestIdRef = useRef(0);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventDetail, setShowEventDetail] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -121,6 +124,8 @@ export default function App() {
   );
   const [timetableSyncEnabled, setTimetableSyncEnabled] = useState(false);
   const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
+  const [homeTimetable, setHomeTimetable] = useState([]);
+  const [homeTimetableLoading, setHomeTimetableLoading] = useState(false);
   const [rsvpEventIds, setRsvpEventIds] = useState(() =>
     getUserRSVPEventIds("guest"),
   );
@@ -465,6 +470,46 @@ export default function App() {
     };
   }, [currentUserKey]);
 
+  // Keep Home ticker on the same Supabase timetable as Schedule → Academic Timeline.
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHomeTimetable = async () => {
+      if (
+        !timetableSyncEnabled ||
+        !currentUserKey ||
+        currentUserKey === "guest"
+      ) {
+        if (!cancelled) {
+          setHomeTimetable([]);
+          setHomeTimetableLoading(false);
+        }
+        return;
+      }
+
+      setHomeTimetableLoading(true);
+
+      try {
+        const blocks = await getTodayScheduleBlocks({
+          studentId: currentUserKey,
+          programme: currentProgramme,
+        });
+        if (!cancelled) setHomeTimetable(Array.isArray(blocks) ? blocks : []);
+      } catch (error) {
+        console.error("Unable to load home timetable from Supabase:", error);
+        if (!cancelled) setHomeTimetable([]);
+      } finally {
+        if (!cancelled) setHomeTimetableLoading(false);
+      }
+    };
+
+    void loadHomeTimetable();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserKey, currentProgramme, timetableSyncEnabled]);
+
   useEffect(() => {
     const handleTimetableSyncUpdate = (event) => {
       const updatedStudentId = event?.detail?.studentId;
@@ -538,10 +583,28 @@ export default function App() {
 
   const refreshRecommendation = useCallback(
     async ({ useAI = true } = {}) => {
+      const requestId = ++recommendationRequestIdRef.current;
       setLoadingRecommendation(true);
+      if (useAI) setRefreshStatus("Updating…");
 
       try {
-        const current = getAIMeterState(currentUserKey);
+        // Pull latest scores from cloud history, then local meter.
+        let current = getAIMeterState(currentUserKey);
+        if (useAI && currentUserKey && currentUserKey !== "guest") {
+          const history = await fetchLatestAIMeterHistory(currentUserKey);
+          if (history && recommendationRequestIdRef.current === requestId) {
+            const focusScore = Number(history.focus_score);
+            const balanceScore = Number(history.balance_score);
+            if (Number.isFinite(focusScore) && Number.isFinite(balanceScore)) {
+              current = {
+                ...current,
+                focusScore,
+                balanceScore,
+              };
+            }
+          }
+        }
+
         let recommendation = buildRecommendationFromScores({
           focusScore: current.focusScore,
           balanceScore: current.balanceScore,
@@ -555,11 +618,18 @@ export default function App() {
             focusScore: current.focusScore,
             balanceScore: current.balanceScore,
             displayName,
-            recentActivities: [],
+            recentActivities: [
+              `Mode: ${mode}`,
+              `Focus ${current.focusScore}%`,
+              `Wellness ${current.balanceScore}%`,
+              `Refresh at ${new Date().toLocaleTimeString()}`,
+            ],
           });
           recommendation = aiResult.recommendation;
           source = aiResult.source;
         }
+
+        if (recommendationRequestIdRef.current !== requestId) return;
 
         const next = setAIMeterState(
           {
@@ -570,8 +640,15 @@ export default function App() {
           currentUserKey,
         );
         setAiMeter(next);
+        if (useAI) {
+          setRefreshStatus(
+            source === "groq"
+              ? `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : "Updated (offline rules)",
+          );
+        }
 
-        if (currentUserKey && currentUserKey !== "guest") {
+        if (useAI && currentUserKey && currentUserKey !== "guest") {
           saveAIMeterHistory({
             userId: currentUserKey,
             mode,
@@ -580,8 +657,13 @@ export default function App() {
             recommendation: next.recommendation,
           }).catch(() => {});
         }
+      } catch (error) {
+        console.warn("Refresh recommendation failed:", error);
+        if (useAI) setRefreshStatus("Refresh failed — try again");
       } finally {
-        setLoadingRecommendation(false);
+        if (recommendationRequestIdRef.current === requestId) {
+          setLoadingRecommendation(false);
+        }
       }
     },
     [currentUserKey, displayName, mode],
@@ -590,7 +672,7 @@ export default function App() {
   useEffect(() => {
     // Mode switches use fast local rules; Refresh button uses full Groq AI.
     refreshRecommendation({ useAI: false });
-  }, [mode, currentUserKey]);
+  }, [mode, currentUserKey, refreshRecommendation]);
 
   // Mode toggle removed from global scope; it's now scoped to Profile page only.
 
@@ -971,9 +1053,8 @@ export default function App() {
   ];
 
   const isDarkTheme = true;
-  const activeDailyTimetable = timetableSyncEnabled
-    ? timetableProfile.today
-    : [];
+  // Prefer live Supabase day schedule so Home matches Schedule tab.
+  const activeDailyTimetable = timetableSyncEnabled ? homeTimetable : [];
 
   return (
     <div
@@ -1176,6 +1257,8 @@ export default function App() {
                       <Timetable
                         mode={mode}
                         timetableData={activeDailyTimetable}
+                        loading={homeTimetableLoading || timetableSyncLoading}
+                        syncEnabled={timetableSyncEnabled}
                       />
 
                       <div className="mt-3 px-5 pb-2">
@@ -1196,6 +1279,8 @@ export default function App() {
                           focusScore={aiMeter.focusScore}
                           balanceScore={aiMeter.balanceScore}
                           recommendation={aiMeter.recommendation}
+                          recommendationSource={aiMeter.recommendationSource}
+                          refreshStatus={refreshStatus}
                           loadingRecommendation={loadingRecommendation}
                           onRefreshRecommendation={() =>
                             refreshRecommendation({ useAI: true })
