@@ -1,4 +1,4 @@
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 
 const VALID_ROLES = new Set([
   "student",
@@ -7,80 +7,6 @@ const VALID_ROLES = new Set([
   "super_admin",
 ]);
 
-
-function getGoogleProfileValues(authUser) {
-  const metadata = authUser?.user_metadata || {};
-
-  return {
-    id: authUser.id,
-    full_name:
-      metadata.full_name ||
-      metadata.name ||
-      authUser.email?.split("@")[0] ||
-      "User",
-    email: String(authUser.email || "").trim().toLowerCase(),
-    role: "student",
-    avatar:
-      metadata.avatar_url ||
-      metadata.picture ||
-      null,
-    last_login: new Date().toISOString(),
-  };
-}
-
-/**
- * Creates the public.users row for a first-time OAuth user and refreshes
- * safe Google profile fields on later logins. Existing faculty/programme
- * values are not overwritten.
- */
-export async function ensureGoogleUserProfile(authUser) {
-  if (!authUser?.id) {
-    throw new Error("Authenticated Google user is missing.");
-  }
-
-  const provider =
-    authUser.app_metadata?.provider ||
-    authUser.identities?.[0]?.provider ||
-    "";
-
-  if (provider !== "google") {
-    return;
-  }
-
-  const profileValues = getGoogleProfileValues(authUser);
-
-  const { data: existingProfile, error: findError } = await supabase
-    .from("users")
-    .select("id")
-    .eq("id", authUser.id)
-    .maybeSingle();
-
-  if (findError) {
-    throw findError;
-  }
-
-  if (!existingProfile) {
-    const { error: insertError } = await supabase
-      .from("users")
-      .insert(profileValues);
-
-    if (insertError) {
-      throw insertError;
-    }
-
-    return;
-  }
-
-  const { id, ...loginUpdates } = profileValues;
-  const { error: updateError } = await supabase
-    .from("users")
-    .update(loginUpdates)
-    .eq("id", id);
-
-  if (updateError) {
-    throw updateError;
-  }
-}
 
 export function getFacultyFromProgramme(programme) {
   const value = String(programme || "").toLowerCase();
@@ -124,7 +50,7 @@ export function getFacultyFromProgramme(programme) {
   return "General Studies";
 }
 
-export async function completeGoogleUserProfile({ programme }) {
+export async function completeUserProfile({ programme }) {
   const normalizedProgramme = String(programme || "").trim();
 
   if (!normalizedProgramme) {
@@ -187,8 +113,6 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
   if (!authUser) {
     return null;
   }
-
-  await ensureGoogleUserProfile(authUser);
 
   const { data: profile, error: profileError } = await supabase
     .from("users")

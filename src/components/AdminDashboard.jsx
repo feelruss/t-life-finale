@@ -1,7 +1,7 @@
 // This is the src/components/AdminDashboard.jsx file
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
-import { supabase } from "./GoogleLogin";
+import { supabase } from "../libs/supabase";
 import {
   BarChart3,
   Users,

@@ -200,11 +200,16 @@ function buildSlotSuggestionTime(slotTime, offsetMinutes) {
 
 function SwipeableEventRow({ children }) {
   return (
-    <div
-      className="flex gap-2 overflow-x-auto hide-scrollbar snap-x snap-mandatory"
-      style={{ WebkitOverflowScrolling: "touch" }}
-    >
-      {children}
+    <div className="w-full min-w-0 overflow-hidden">
+      <div
+        className="flex w-full min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-1 hide-scrollbar snap-x snap-mandatory"
+        style={{
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -272,7 +277,7 @@ export default function SchedulePage({
     return () => {
       cancelled = true;
     };
-  }, [userId, programme, timetableSynced]);
+  }, [userId, programme, timetableSynced, selectedDay, selectedWeek]);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,7 +323,7 @@ export default function SchedulePage({
       cancelled = true;
       window.removeEventListener("taylors-events-updated", handleEventsUpdated);
     };
-  }, []);
+  }, [selectedDay, selectedWeek]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +368,7 @@ export default function SchedulePage({
 
       window.removeEventListener("taylors-rsvp-updated", handleRSVPUpdate);
     };
-  }, [userId]);
+  }, [userId, selectedDay, selectedWeek]);
 
   const weekConfig = weekConfigs[selectedWeek];
   const activeSchedule = databaseSchedule;
@@ -643,7 +648,7 @@ export default function SchedulePage({
       {timetableSynced && (
         <>
           {/* Timetable Timeline */}
-          <div className="relative">
+          <div key={selectedDateISO} className="relative">
             <div className="absolute left-[22px] top-0 bottom-0 w-[2px] bg-white/5" />
 
             <div className="space-y-3">
@@ -668,7 +673,7 @@ export default function SchedulePage({
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.08 }}
-                    className="flex items-start gap-4"
+                    className="flex min-w-0 items-start gap-4"
                   >
                     <div className="flex w-[44px] flex-shrink-0 flex-col items-center">
                       <div
@@ -684,7 +689,7 @@ export default function SchedulePage({
                     </div>
 
                     <div
-                      className={`flex-1 rounded-xl p-4 transition-all duration-300 ${
+                      className={`min-w-0 flex-1 overflow-hidden rounded-xl p-4 transition-all duration-300 ${
                         isFree
                           ? "border border-balance-accent/20 bg-gradient-to-r from-balance-accent/10 to-balance-accent/5"
                           : "glass"
@@ -716,13 +721,14 @@ export default function SchedulePage({
                       )}
 
                       {isFree && (
-                        <div className="mt-3 border-t border-balance-accent/10 pt-3">
-                          <div className="mb-2 flex items-center gap-1.5">
-                            <span className="relative flex h-2 w-2">
+                        <div className="mt-3 min-w-0 overflow-hidden border-t border-balance-accent/10 pt-3">
+                          <div className="mb-2 flex min-w-0 items-center gap-1.5">
+                            <span className="relative flex h-2 w-2 flex-shrink-0">
                               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-balance-accent opacity-75" />
                               <span className="relative inline-flex h-2 w-2 rounded-full bg-balance-accent" />
                             </span>
-                            <span className="text-[10px] font-inter font-medium text-balance-accent/80">
+
+                            <span className="min-w-0 text-[10px] font-inter font-medium text-balance-accent/80">
                               AI found {(slotEventMap[slot.id] || []).length}{" "}
                               event
                               {(slotEventMap[slot.id] || []).length === 1
@@ -731,24 +737,28 @@ export default function SchedulePage({
                               for this slot
                             </span>
                           </div>
+
                           <SwipeableEventRow>
                             {(slotEventMap[slot.id] || []).map((event) => (
                               <button
                                 key={`${event.sourceTable}-${event.sourceId}`}
                                 type="button"
                                 onClick={() => onEventClick?.(event)}
-                                className="min-w-[138px] max-w-[150px] flex-shrink-0 snap-start rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 transition-colors hover:bg-white/10"
+                                className="w-[145px] min-w-[145px] flex-none snap-start overflow-hidden rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-left transition-colors hover:bg-white/10"
                               >
-                                <p className="mb-0.5 text-[9px] font-inter font-bold text-green-400">
+                                <p className="mb-0.5 truncate text-[9px] font-inter font-bold text-green-400">
                                   {event.match_score || "—"} Match
                                 </p>
+
                                 <p className="truncate text-[10px] font-outfit font-semibold text-white">
                                   {event.title}
                                 </p>
-                                <p className="text-[9px] font-inter text-gray-500">
-                                  {event.host}
+
+                                <p className="truncate text-[9px] font-inter text-gray-500">
+                                  {event.host || "Campus Event"}
                                 </p>
-                                <p className="text-[8px] font-inter text-gray-500">
+
+                                <p className="truncate text-[8px] font-inter text-gray-500">
                                   {event.time || "TBD"}
                                 </p>
                               </button>

@@ -1,4 +1,4 @@
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 
 const ROLE_MAP = {
   "Super Admin": "super_admin",

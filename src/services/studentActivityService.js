@@ -1,4 +1,4 @@
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 
 export async function createStudentActivity({
   studentId,

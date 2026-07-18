@@ -9,7 +9,7 @@ import {
 } from "../data/db";
 import { events } from "../data/events";
 import { clubs } from "../data/clubs";
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 import { fetchStudentActivity } from "../services/studentActivityService";
 
 const parseDurationHours = (timeRange) => {

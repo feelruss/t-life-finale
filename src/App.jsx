@@ -36,7 +36,7 @@ import LoginPage from "./pages/LoginPage";
 import Profile from "./pages/Profile";
 import CompleteProfilePage from "./pages/CompleteProfilePage";
 import Chatbot from "./components/Chatbot";
-import { supabase } from "./components/GoogleLogin";
+import { supabase } from "./libs/supabase";
 import { getCurrentSupabaseUser } from "./libs/auth";
 import { createStudentActivity } from "./services/studentActivityService";
 import {
@@ -251,7 +251,7 @@ export default function App() {
           throw error;
         }
 
-        // No Google/Supabase session: show the normal landing page.
+        // No Supabase session: show the normal landing page.
         if (!session?.user) {
           if (isMounted) {
             setCurrentScreen("landing");
@@ -292,7 +292,7 @@ export default function App() {
       /*
        * restoreSession() already handles the initial session.
        * Ignoring INITIAL_SESSION prevents competing screen changes
-       * while Google OAuth is being restored.
+       * while the Supabase session is being restored.
        */
       if (event === "INITIAL_SESSION") {
         return;

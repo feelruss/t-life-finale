@@ -1,4 +1,4 @@
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 
 const TIMETABLE_SYNC_EVENT = "taylors-timetable-sync-updated";
 

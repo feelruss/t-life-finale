@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
-import { completeGoogleUserProfile } from "../libs/auth";
+import { completeUserProfile } from "../libs/auth";
 
 const PROGRAMMES = [
   "Bachelor of Computer Science (Hons.)",
@@ -29,7 +29,7 @@ export default function CompleteProfilePage({ user, onCompleted }) {
     setSaving(true);
 
     try {
-      const completedUser = await completeGoogleUserProfile({ programme });
+      const completedUser = await completeUserProfile({ programme });
       onCompleted?.(completedUser);
     } catch (err) {
       console.error("Profile completion failed:", err);

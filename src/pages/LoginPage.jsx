@@ -18,7 +18,6 @@ import {
   signUpStudent,
   sendPasswordReset,
 } from "../libs/auth";
-import GoogleLogin from "../components/GoogleLogin";
 
 const LoginPage = ({ onLogin }) => {
   const [authView, setAuthView] = useState("signin"); // 'signin' | 'signup' | 'forgot'
@@ -326,13 +325,6 @@ const LoginPage = ({ onLogin }) => {
                 )}
               </button>
 
-              <div className="my-4 flex items-center gap-2">
-                <div className="flex-1 h-px bg-white/10"></div>
-                <span className="text-xs text-gray-500 font-inter">OR</span>
-                <div className="flex-1 h-px bg-white/10"></div>
-              </div>
-
-              <GoogleLogin onLogin={onLogin} />
             </motion.form>
           ) : authView === "signup" ? (
             <motion.form

@@ -1,4 +1,4 @@
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 
 function normalizeCategory(value, fallback = "balance") {
   const category = String(value || "").trim().toLowerCase();

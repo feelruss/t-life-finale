@@ -1,5 +1,5 @@
 // This is the src/services/clubService.js
-import { supabase } from "../components/GoogleLogin";
+import { supabase } from "../libs/supabase";
 import { addUserActivity } from "../data/db";
 import { createStudentActivity } from "./studentActivityService";
 
