@@ -552,16 +552,24 @@ export const setAIMeterState = (nextState, userKey = 'guest') => {
     return normalized;
 };
 
+export const normalizeMeterCategory = (category) => {
+    const raw = String(category || '').trim().toLowerCase();
+    if (['focus', 'academic', 'study', 'workshop'].includes(raw)) return 'focus';
+    if (['balance', 'wellness', 'wellbeing', 'social', 'sport'].includes(raw)) return 'balance';
+    return raw === 'focus' || raw === 'balance' ? raw : 'focus';
+};
+
 export const applyEventToAIMeter = ({ category, userKey = 'guest', direction = 'in' }) => {
     const current = getAIMeterState(userKey);
     let nextFocus = current.focusScore;
     let nextBalance = current.balanceScore;
     const factor = direction === 'out' ? -1 : 1;
+    const normalized = normalizeMeterCategory(category);
 
-    if (category === 'focus') {
+    if (normalized === 'focus') {
         nextFocus += 8 * factor;
         nextBalance -= 3 * factor;
-    } else if (category === 'balance') {
+    } else if (normalized === 'balance') {
         nextFocus -= 3 * factor;
         nextBalance += 8 * factor;
     }
@@ -573,7 +581,7 @@ export const applyEventToAIMeter = ({ category, userKey = 'guest', direction = '
         recommendation: buildRecommendationFromScores({
             focusScore: nextFocus,
             balanceScore: nextBalance,
-            mode: category,
+            mode: normalized,
         }),
     }, userKey);
 };

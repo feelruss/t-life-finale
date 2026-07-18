@@ -325,6 +325,11 @@ const LoginPage = ({ onLogin }) => {
                 )}
               </button>
 
+              <p className="mt-4 text-center text-[11px] font-inter text-gray-500 leading-relaxed">
+                University platform — sign in with your{" "}
+                <span className="text-gray-300">@taylors.edu.my</span> or{" "}
+                <span className="text-gray-300">@sd.taylors.edu.my</span> email.
+              </p>
             </motion.form>
           ) : authView === "signup" ? (
             <motion.form

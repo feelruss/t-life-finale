@@ -12,7 +12,11 @@ export default function FocusMeterWidget({
 }) {
 
     return (
-        <div className="glass rounded-2xl p-5 w-full mt-4 border border-white/10">
+        <motion.div
+            className="glass rounded-2xl p-5 w-full mt-4 border border-white/10"
+            animate={{ y: [0, -6, 0] }}
+            transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+        >
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2 text-white font-bold font-outfit">
                     <Brain className={currentMode === 'focus' ? 'text-red-200' : 'text-teal-200'} size={20} />
@@ -63,9 +67,9 @@ export default function FocusMeterWidget({
                     {/* AI Recommendation */}
                     <div className={currentMode === 'focus' ? 'bg-white/5 border border-red-500/20 rounded-xl p-3 text-xs text-red-50 font-inter mt-4 leading-relaxed' : 'bg-white/5 border border-teal-500/20 rounded-xl p-3 text-xs text-teal-50 font-inter mt-4 leading-relaxed'}>
                         <span className="text-white font-semibold">AI Recommendation: </span>
-                        {recommendation}
+                        {loadingRecommendation ? 'Analyzing your Focus & Wellness scores…' : recommendation}
                     </div>
                 </div>
-        </div>
+        </motion.div>
     );
 }

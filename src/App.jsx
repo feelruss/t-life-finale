@@ -31,6 +31,7 @@ import {
   getPrivacySettings,
   toggleEventRSVP,
   getUserRSVPEventIds,
+  normalizeMeterCategory,
 } from "./data/db";
 import LoginPage from "./pages/LoginPage";
 import Profile from "./pages/Profile";
@@ -44,9 +45,13 @@ import {
   timetableSyncEventName,
 } from "./services/timetableSyncService";
 import {
-  cancelEventRSVP,
-  getStudentRSVP,
+  generateAIRecommendation,
+  saveAIMeterHistory,
+  fetchLatestAIMeterHistory,
+} from "./services/aiMeterService";
+import {
   registerForEvent,
+  cancelEventRSVP,
 } from "./services/rsvpService";
 
 const saveStudentActivity = (activity) => {
@@ -106,6 +111,7 @@ export default function App() {
         }),
     };
   });
+  const [loadingRecommendation, setLoadingRecommendation] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventDetail, setShowEventDetail] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -219,6 +225,36 @@ export default function App() {
     setCurrentProgramme(programme);
     setCurrentUserKey(userKey);
     setAiMeter(loadMeterForUser(userKey));
+
+    // Rehydrate Focus/Wellness from Supabase history when available.
+    if (userKey && userKey !== "guest") {
+      fetchLatestAIMeterHistory(userKey)
+        .then((row) => {
+          if (!row) return;
+          const focusScore = Number(row.focus_score);
+          const balanceScore = Number(row.balance_score);
+          if (!Number.isFinite(focusScore) || !Number.isFinite(balanceScore)) {
+            return;
+          }
+          const next = setAIMeterState(
+            {
+              focusScore,
+              balanceScore,
+              recommendation:
+                row.ai_recommendation ||
+                buildRecommendationFromScores({
+                  focusScore,
+                  balanceScore,
+                  mode: row.mode || "focus",
+                }),
+              recommendationSource: row.ai_recommendation ? "history" : "rules",
+            },
+            userKey,
+          );
+          setAiMeter(next);
+        })
+        .catch(() => {});
+    }
 
     // Students must complete their programme first.
     if (role === "student" && programme.length === 0) {
@@ -447,7 +483,10 @@ export default function App() {
       }
     };
 
-    window.addEventListener(timetableSyncEventName, handleTimetableSyncUpdate);
+    window.addEventListener(
+      timetableSyncEventName,
+      handleTimetableSyncUpdate,
+    );
 
     return () => {
       window.removeEventListener(
@@ -497,25 +536,60 @@ export default function App() {
     setMode((prev) => (prev === "focus" ? "balance" : "focus"));
   };
 
-  const refreshRecommendation = () => {
-    setAiMeter((prev) => {
-      const next = setAIMeterState(
-        {
-          ...prev,
-          recommendation: buildRecommendationFromScores({
-            focusScore: prev.focusScore,
-            balanceScore: prev.balanceScore,
+  const refreshRecommendation = useCallback(
+    async ({ useAI = true } = {}) => {
+      setLoadingRecommendation(true);
+
+      try {
+        const current = getAIMeterState(currentUserKey);
+        let recommendation = buildRecommendationFromScores({
+          focusScore: current.focusScore,
+          balanceScore: current.balanceScore,
+          mode,
+        });
+        let source = "rules";
+
+        if (useAI) {
+          const aiResult = await generateAIRecommendation({
             mode,
-          }),
-        },
-        currentUserKey,
-      );
-      return next;
-    });
-  };
+            focusScore: current.focusScore,
+            balanceScore: current.balanceScore,
+            displayName,
+            recentActivities: [],
+          });
+          recommendation = aiResult.recommendation;
+          source = aiResult.source;
+        }
+
+        const next = setAIMeterState(
+          {
+            ...current,
+            recommendation,
+            recommendationSource: source,
+          },
+          currentUserKey,
+        );
+        setAiMeter(next);
+
+        if (currentUserKey && currentUserKey !== "guest") {
+          saveAIMeterHistory({
+            userId: currentUserKey,
+            mode,
+            focusScore: next.focusScore,
+            balanceScore: next.balanceScore,
+            recommendation: next.recommendation,
+          }).catch(() => {});
+        }
+      } finally {
+        setLoadingRecommendation(false);
+      }
+    },
+    [currentUserKey, displayName, mode],
+  );
 
   useEffect(() => {
-    refreshRecommendation();
+    // Mode switches use fast local rules; Refresh button uses full Groq AI.
+    refreshRecommendation({ useAI: false });
   }, [mode, currentUserKey]);
 
   // Mode toggle removed from global scope; it's now scoped to Profile page only.
@@ -544,6 +618,40 @@ export default function App() {
         direction: "in",
       });
       setAiMeter(nextMeter);
+      if (currentUserKey && currentUserKey !== "guest") {
+        saveAIMeterHistory({
+          userId: currentUserKey,
+          mode: event.category || mode,
+          focusScore: nextMeter.focusScore,
+          balanceScore: nextMeter.balanceScore,
+          recommendation: nextMeter.recommendation,
+        }).catch(() => {});
+        // Refresh AI advice after engagement changes
+        generateAIRecommendation({
+          mode,
+          focusScore: nextMeter.focusScore,
+          balanceScore: nextMeter.balanceScore,
+          displayName: actorName,
+          recentActivities: [`Checked in: ${event.title}`],
+        }).then((aiResult) => {
+          const withAI = setAIMeterState(
+            {
+              ...nextMeter,
+              recommendation: aiResult.recommendation,
+              recommendationSource: aiResult.source,
+            },
+            currentUserKey,
+          );
+          setAiMeter(withAI);
+          saveAIMeterHistory({
+            userId: currentUserKey,
+            mode,
+            focusScore: withAI.focusScore,
+            balanceScore: withAI.balanceScore,
+            recommendation: withAI.recommendation,
+          }).catch(() => {});
+        });
+      }
       const activity = {
         userKey: currentUserKey,
         type: "checkin",
@@ -571,7 +679,7 @@ export default function App() {
         eventId: event.id,
       });
       alert(
-        `✅ Checked in to ${event.title}. Admin attendance log has been updated.`,
+        `✅ Checked in to ${event.title}. +50 points · AI Status Meter updated.`,
       );
     } else if (result.status === "unchecked") {
       const nextPoints = adjustUserPoints(
@@ -651,16 +759,13 @@ export default function App() {
 
     setSelectedEvent({
       ...event,
-
       // The modal and Supabase RSVP should use the real campus_events ID.
       id: canonicalId,
       sourceEventId: canonicalId,
-
       isRSVPd:
         Boolean(event.isRSVPd) ||
         (canonicalId ? rsvpEventIds.map(String).includes(canonicalId) : false),
     });
-
     setShowEventDetail(true);
   };
 
@@ -706,247 +811,145 @@ export default function App() {
   };
 
   const handleRSVP = (event) => {
-    if (!event?.id && !event?.sourceEventId) return;
+    if (!event?.id && !event?.sourceEventId && !event?.eventId) return;
 
     const result = toggleEventRSVP({
       event,
       userKey: currentUserKey,
     });
-
-    const canonicalId =
-      result.eventId || String(event.sourceEventId || event.id || "");
+    const canonicalId = String(
+      result.eventId ||
+        event.sourceEventId ||
+        event.sourceId ||
+        event.eventId ||
+        event.id ||
+        "",
+    ).trim();
+    const meterCategory = normalizeMeterCategory(event.category || mode);
 
     setRsvpEventIds(getUserRSVPEventIds(currentUserKey));
-
     setSelectedEvent((prev) => {
       if (!prev) return prev;
-
-      const prevCanonical = String(prev.sourceEventId || prev.id || "");
-
+      const prevCanonical = String(
+        prev.sourceEventId || prev.sourceId || prev.eventId || prev.id || "",
+      ).trim();
       if (prevCanonical !== canonicalId) {
         return prev;
       }
-
       return {
         ...prev,
         isRSVPd: result.status === "added",
       };
     });
 
-    if (result.status === "added") {
-      const activity = {
+    // Joining / leaving an event must move Focus & Wellness (was check-in only).
+    if (result.status === "added" || result.status === "removed") {
+      const nextMeter = applyEventToAIMeter({
+        category: meterCategory,
         userKey: currentUserKey,
-        type: "rsvp",
-        title: `RSVP confirmed: ${event.title}`,
-        detail: `${event.date || "Date TBC"} • ${event.time || "Time TBC"}`,
-      };
+        direction: result.status === "added" ? "in" : "out",
+      });
+      setAiMeter(nextMeter);
 
-      addUserActivity(activity);
+      if (currentUserKey && currentUserKey !== "guest") {
+        saveAIMeterHistory({
+          userId: currentUserKey,
+          mode: meterCategory,
+          focusScore: nextMeter.focusScore,
+          balanceScore: nextMeter.balanceScore,
+          recommendation: nextMeter.recommendation,
+        }).catch(() => {});
 
-      saveStudentActivity({
-        studentId: currentUserKey,
-        type: activity.type,
-        title: activity.title,
-        detail: activity.detail,
-        entityType: "event",
-        entityId: canonicalId,
-        metadata: {
+        registerOrCancelCloudRSVP({
+          status: result.status,
+          studentId: currentUserKey,
+          eventId: canonicalId,
           eventTitle: event.title,
-        },
-      });
+          skipActivity: true,
+        });
+      }
 
-      addNotification({
-        userKey: currentUserKey,
-        type: "event-rsvp",
-        title: "RSVP confirmed",
-        body: `You signed up for ${event.title}.`,
-        priority: "medium",
-        icon: "🎟️",
-        accentColor: "#60A5FA",
-        eventId: canonicalId,
-      });
-    } else if (result.status === "removed") {
-      const activity = {
-        userKey: currentUserKey,
-        type: "rsvp-remove",
-        title: `RSVP removed: ${event.title}`,
-        detail: "You removed this event from your upcoming list.",
-      };
-
-      addUserActivity(activity);
-
-      saveStudentActivity({
-        studentId: currentUserKey,
-        type: activity.type,
-        title: activity.title,
-        detail: activity.detail,
-        entityType: "event",
-        entityId: canonicalId,
-        metadata: {
-          eventTitle: event.title,
-        },
-      });
-
-      addNotification({
-        userKey: currentUserKey,
-        type: "event-rsvp-removed",
-        title: "RSVP removed",
-        body: `${event.title} was removed from your signups.`,
-        priority: "low",
-        icon: "🗑️",
-        accentColor: "#9CA3AF",
-        eventId: canonicalId,
-      });
+      if (result.status === "added") {
+        const activity = {
+          userKey: currentUserKey,
+          type: "rsvp",
+          title: `RSVP confirmed: ${event.title}`,
+          detail: `Focus ${nextMeter.focusScore}% • Wellness ${nextMeter.balanceScore}%`,
+        };
+        addUserActivity(activity);
+        saveStudentActivity({
+          studentId: currentUserKey,
+          type: activity.type,
+          title: activity.title,
+          detail: activity.detail,
+          entityType: "event",
+          entityId: canonicalId,
+          metadata: { eventTitle: event.title },
+        });
+        addNotification({
+          userKey: currentUserKey,
+          type: "event-rsvp",
+          title: "RSVP confirmed",
+          body: `You joined ${event.title}. AI Status Meter updated.`,
+          priority: "medium",
+          icon: "🎟️",
+          accentColor: "#60A5FA",
+          eventId: canonicalId,
+        });
+        alert(
+          `🎟️ Joined ${event.title}. Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%.`,
+        );
+      } else {
+        const activity = {
+          userKey: currentUserKey,
+          type: "rsvp-remove",
+          title: `RSVP removed: ${event.title}`,
+          detail: `Focus ${nextMeter.focusScore}% • Wellness ${nextMeter.balanceScore}%`,
+        };
+        addUserActivity(activity);
+        saveStudentActivity({
+          studentId: currentUserKey,
+          type: activity.type,
+          title: activity.title,
+          detail: activity.detail,
+          entityType: "event",
+          entityId: canonicalId,
+          metadata: { eventTitle: event.title },
+        });
+        addNotification({
+          userKey: currentUserKey,
+          type: "event-rsvp-removed",
+          title: "RSVP removed",
+          body: `${event.title} removed. Scores adjusted.`,
+          priority: "low",
+          icon: "🗑️",
+          accentColor: "#9CA3AF",
+          eventId: canonicalId,
+        });
+        alert(
+          `↩️ Left ${event.title}. Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%.`,
+        );
+      }
     }
   };
 
-  // Hangle RSVP Event
-  const handleEventRSVP = async (event) => {
-    const studentId = currentUserKey !== "guest" ? currentUserKey : null;
+  const registerOrCancelCloudRSVP = ({
+    status,
+    studentId,
+    eventId,
+    eventTitle,
+    skipActivity = true,
+  }) => {
+    if (!studentId || studentId === "guest" || !eventId) return;
 
-    const eventId = String(
-      event?.sourceEventId ||
-        event?.sourceId ||
-        event?.eventId ||
-        event?.id ||
-        "",
-    ).trim();
+    const action =
+      status === "added"
+        ? registerForEvent({ studentId, eventId, eventTitle, skipActivity })
+        : cancelEventRSVP({ studentId, eventId, eventTitle, skipActivity });
 
-    if (!studentId) {
-      throw new Error("You must be signed in before registering for an event.");
-    }
-
-    if (!eventId) {
-      throw new Error("The event ID is missing.");
-    }
-
-    const existingRSVP = await getStudentRSVP(studentId, eventId);
-
-    const isCurrentlyRegistered =
-      existingRSVP &&
-      ["registered", "waitlisted"].includes(existingRSVP.status) &&
-      !existingRSVP.cancelled_at;
-
-    if (isCurrentlyRegistered) {
-      await cancelEventRSVP({
-        studentId,
-        eventId,
-      });
-
-      /*
-       * Save the RSVP removal in student_activity so the
-       * Profile Recent Changes section can display it.
-       */
-      await createStudentActivity({
-        studentId,
-        type: "rsvp-remove",
-        title: `RSVP removed: ${event.title}`,
-        detail: "You removed this event from your upcoming RSVP list.",
-        entityType: "event",
-        entityId: eventId,
-        metadata: {
-          eventTitle: event.title,
-          eventDate: event.date || null,
-          eventTime: event.time || null,
-          rsvpStatus: "cancelled",
-        },
-      });
-
-      setSelectedEvent((previous) =>
-        previous
-          ? {
-              ...previous,
-              isRSVPd: false,
-              rsvpStatus: "cancelled",
-            }
-          : previous,
-      );
-
-      setRsvpEventIds((previous) =>
-        previous.filter((savedEventId) => String(savedEventId) !== eventId),
-      );
-
-      /*
-       * Dispatch this after both event_rsvps and student_activity have been updated.
-       */
-      window.dispatchEvent(
-        new CustomEvent("taylors-rsvp-updated", {
-          detail: {
-            studentId,
-            eventId,
-            status: "cancelled",
-          },
-        }),
-      );
-
-      return {
-        isRSVPd: false,
-        status: "cancelled",
-      };
-    }
-
-    const savedRSVP = await registerForEvent({
-      studentId,
-      eventId,
+    action.catch((error) => {
+      console.warn("Cloud RSVP sync failed:", error?.message || error);
     });
-
-    /*
-     * Save the RSVP registration in student_activity so the Profile Recent Changes section can display it.
-     */
-    await createStudentActivity({
-      studentId,
-      type: "rsvp",
-      title: `RSVP confirmed: ${event.title}`,
-      detail: `${event.date || "Date TBC"} • ${event.time || "Time TBC"}`,
-      entityType: "event",
-      entityId: eventId,
-      metadata: {
-        eventTitle: event.title,
-        eventDate: event.date || null,
-        eventTime: event.time || null,
-        rsvpStatus: savedRSVP.status,
-      },
-    });
-
-    setSelectedEvent((previous) =>
-      previous
-        ? {
-            ...previous,
-            isRSVPd: true,
-            rsvpId: savedRSVP.id,
-            rsvpStatus: savedRSVP.status,
-          }
-        : previous,
-    );
-
-    setRsvpEventIds((previous) => {
-      const normalizedIds = previous.map(String);
-
-      if (normalizedIds.includes(eventId)) {
-        return previous;
-      }
-
-      return [...previous, eventId];
-    });
-
-    /*
-     * Dispatch this after the activity record has been inserted.
-     */
-    window.dispatchEvent(
-      new CustomEvent("taylors-rsvp-updated", {
-        detail: {
-          studentId,
-          eventId,
-          status: savedRSVP.status,
-        },
-      }),
-    );
-
-    return {
-      isRSVPd: true,
-      status: savedRSVP.status,
-      rsvp: savedRSVP,
-    };
   };
 
   const handleTabChange = useCallback((nextTab) => {
@@ -1193,8 +1196,10 @@ export default function App() {
                           focusScore={aiMeter.focusScore}
                           balanceScore={aiMeter.balanceScore}
                           recommendation={aiMeter.recommendation}
-                          loadingRecommendation={false}
-                          onRefreshRecommendation={refreshRecommendation}
+                          loadingRecommendation={loadingRecommendation}
+                          onRefreshRecommendation={() =>
+                            refreshRecommendation({ useAI: true })
+                          }
                         />
                       </div>
 
@@ -1226,9 +1231,6 @@ export default function App() {
                         programme={currentProgramme}
                         timetableSynced={timetableSyncEnabled}
                         timetableSyncLoading={timetableSyncLoading}
-                        focusMode={
-                          currentUserKey.focus_mode || mode || "balance"
-                        }
                         onEventClick={handleEventClick}
                       />
                     </motion.div>
@@ -1320,13 +1322,10 @@ export default function App() {
         {/* Event Detail Modal */}
         <EventDetailModal
           event={selectedEvent}
-          isOpen={Boolean(selectedEvent)}
-          onClose={() => {
-            setSelectedEvent(null);
-            setShowEventDetail(false);
-          }}
+          isOpen={showEventDetail}
+          onClose={() => setShowEventDetail(false)}
           onCheckIn={handleCheckIn}
-          onRSVP={handleEventRSVP}
+          onRSVP={handleRSVP}
         />
 
         <NotificationCenter
@@ -1361,7 +1360,9 @@ export default function App() {
       {currentScreen === "app" &&
         !showAdmin &&
         !showNotifications &&
-        !showEventDetail && <Chatbot />}
+        !showEventDetail && (
+          <Chatbot mode={mode} displayName={displayName} />
+        )}
     </div>
   );
 }

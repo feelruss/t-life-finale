@@ -148,6 +148,8 @@ export async function getStudentRSVP(studentId, eventId) {
 export async function registerForEvent({
   studentId,
   eventId,
+  eventTitle: _eventTitle,
+  skipActivity: _skipActivity = false,
 }) {
   if (!studentId) {
     throw new Error("Student ID is required.");
@@ -191,6 +193,8 @@ export async function registerForEvent({
 export async function cancelEventRSVP({
   studentId,
   eventId,
+  eventTitle: _eventTitle,
+  skipActivity: _skipActivity = false,
 }) {
   if (!studentId || !eventId) {
     throw new Error("Student ID and event ID are required.");
