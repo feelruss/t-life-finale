@@ -1,5 +1,6 @@
 import { supabase } from "../libs/supabase";
 import { events as localEvents } from "../data/events";
+import { buildBaselineMatchScores } from "./eventRecommendationService";
 
 export function mapCampusEvent(row) {
   if (!row) return null;
@@ -14,6 +15,36 @@ export function mapCampusEvent(row) {
 
   const numericMatch = Number(String(matchScoreRaw ?? "0").replace("%", ""));
   const breakdown = row.match_breakdown || row.matchBreakdown || {};
+  const hasBreakdown =
+    Number(breakdown.interest) > 0 ||
+    Number(breakdown.schedule) > 0 ||
+    Number(breakdown.proximity) > 0 ||
+    Number(breakdown.social) > 0;
+
+  // Old rows sometimes only have a blank score — rebuild so student cards never show 0%.
+  const baseline = buildBaselineMatchScores({
+    tag: row.tag,
+    category: row.category,
+    zone: row.zone,
+    location: row.location,
+    capacity: row.capacity,
+  });
+
+  const match_breakdown = hasBreakdown
+    ? {
+        interest: Number(breakdown.interest ?? breakdown.Interest) || 0,
+        schedule: Number(breakdown.schedule ?? breakdown.Schedule) || 0,
+        proximity: Number(breakdown.proximity ?? breakdown.Proximity) || 0,
+        social: Number(breakdown.social ?? breakdown.Social) || 0,
+      }
+    : Number.isFinite(numericMatch) && numericMatch > 0
+      ? {
+          interest: numericMatch,
+          schedule: Math.max(0, numericMatch - 5),
+          proximity: Math.max(0, numericMatch - 10),
+          social: Math.max(0, numericMatch - 15),
+        }
+      : baseline.match_breakdown;
 
   return {
     id: row.id,
@@ -26,13 +57,11 @@ export function mapCampusEvent(row) {
     category: String(row.category || "focus").toLowerCase() === "balance"
       ? "balance"
       : "focus",
-    match_score: matchScoreLabel || `${Number.isFinite(numericMatch) ? numericMatch : 0}%`,
-    match_breakdown: {
-      interest: Number(breakdown.interest ?? breakdown.Interest ?? numericMatch) || 0,
-      schedule: Number(breakdown.schedule ?? breakdown.Schedule ?? Math.max(0, numericMatch - 5)) || 0,
-      proximity: Number(breakdown.proximity ?? breakdown.Proximity ?? Math.max(0, numericMatch - 10)) || 0,
-      social: Number(breakdown.social ?? breakdown.Social ?? Math.max(0, numericMatch - 15)) || 0,
-    },
+    match_score:
+      matchScoreLabel ||
+      baseline.match_score ||
+      `${Number.isFinite(numericMatch) ? numericMatch : 0}%`,
+    match_breakdown,
     friends_attending: row.friends_attending || 0,
     friendNames: row.friend_names || [],
     description: row.description || "Campus event at Taylor's University.",
