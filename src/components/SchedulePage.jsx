@@ -1,7 +1,6 @@
 // This is the src/components/SchedulePage.jsx file
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
-import { events } from "../data/events";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   addDetectedFreeSlots,
@@ -9,6 +8,7 @@ import {
   groupScheduleByDay,
 } from "../services/scheduleService";
 import { getUpcomingRSVPEvents } from "../services/rsvpService";
+import { getScheduleEvents } from "../services/eventScheduleService";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -68,6 +68,22 @@ const weekConfigs = [
   {
     week: 14,
     startDate: "2026-07-20",
+  },
+  {
+    week: 15,
+    startDate: "2026-07-27",
+  },
+  {
+    week: 16,
+    startDate: "2026-08-03",
+  },
+  {
+    week: 17,
+    startDate: "2026-08-10",
+  },
+  {
+    week: 18,
+    startDate: "2026-08-17",
   },
 ];
 
@@ -151,6 +167,29 @@ function parseRange(range) {
   return { start: toMinutes(start), end: toMinutes(end) };
 }
 
+function databaseTimeToMinutes(value) {
+  const [hours, minutes] = String(value || "00:00")
+    .split(":")
+    .map(Number);
+  return hours * 60 + minutes;
+}
+
+function eventFitsInsideFreeSlot(event, freeSlot) {
+  if (!event?.time || !String(event.time).includes(" - ")) {
+    return false;
+  }
+
+  try {
+    const eventRange = parseRange(event.time);
+    const slotStart = databaseTimeToMinutes(freeSlot.startTime);
+    const slotEnd = databaseTimeToMinutes(freeSlot.endTime);
+
+    return eventRange.start >= slotStart && eventRange.end <= slotEnd;
+  } catch {
+    return false;
+  }
+}
+
 function buildSlotSuggestionTime(slotTime, offsetMinutes) {
   const slot = parseRange(slotTime);
   const latestStart = Math.max(slot.start, slot.end - 60);
@@ -175,6 +214,7 @@ export default function SchedulePage({
   programme = "",
   timetableSynced = true,
   timetableSyncLoading = false,
+  focusMode = "focus",
 }) {
   const initialSelection = useMemo(() => getInitialScheduleSelection(), []);
 
@@ -182,6 +222,9 @@ export default function SchedulePage({
 
   const [selectedDay, setSelectedDay] = useState(initialSelection.dayIndex);
   const [upcomingRSVP, setUpcomingRSVP] = useState([]);
+  const [scheduleEvents, setScheduleEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState("");
   const [databaseSchedule, setDatabaseSchedule] = useState(() =>
     Object.fromEntries(days.map((day) => [day, []])),
   );
@@ -230,6 +273,52 @@ export default function SchedulePage({
       cancelled = true;
     };
   }, [userId, programme, timetableSynced]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadEvents = async () => {
+      setEventsLoading(true);
+      setEventsError("");
+
+      const firstDate = weekConfigs[0].startDate;
+      const lastWeekStart = new Date(
+        `${weekConfigs[weekConfigs.length - 1].startDate}T00:00:00`,
+      );
+      lastWeekStart.setDate(lastWeekStart.getDate() + 6);
+      const lastDate = `${lastWeekStart.getFullYear()}-${pad2(
+        lastWeekStart.getMonth() + 1,
+      )}-${pad2(lastWeekStart.getDate())}`;
+
+      try {
+        const rows = await getScheduleEvents({
+          startDate: firstDate,
+          endDate: lastDate,
+        });
+
+        if (!cancelled) {
+          setScheduleEvents(rows);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Unable to load campus and club events:", error);
+        setScheduleEvents([]);
+        setEventsError("Unable to load events from Supabase.");
+      } finally {
+        if (!cancelled) setEventsLoading(false);
+      }
+    };
+
+    const handleEventsUpdated = () => loadEvents();
+
+    loadEvents();
+    window.addEventListener("taylors-events-updated", handleEventsUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("taylors-events-updated", handleEventsUpdated);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,60 +376,62 @@ export default function SchedulePage({
 
   const freeSlots = slots.filter((s) => s.type === "free");
 
+  const selectedDateISO = `${dayDate.getFullYear()}-${pad2(
+    dayDate.getMonth() + 1,
+  )}-${pad2(dayDate.getDate())}`;
+
+  const selectedDayEvents = useMemo(
+    () =>
+      scheduleEvents.filter(
+        (event) => String(event.date || "").slice(0, 10) === selectedDateISO,
+      ),
+    [scheduleEvents, selectedDateISO],
+  );
+
   const slotEventMap = useMemo(() => {
     const map = {};
-    const seed = weekConfig.week * 101 + selectedDay * 17;
 
-    const pool = events.filter(
-      (evt) => evt.category === "focus" || evt.category === "balance",
-    );
-    freeSlots.forEach((slot, slotIndex) => {
-      const count = 1 + ((seed + slotIndex) % 2);
-      const slotSuggestions = [];
+    freeSlots.forEach((slot) => {
+      const slotStart = databaseTimeToMinutes(slot.startTime);
+      const slotEnd = databaseTimeToMinutes(slot.endTime);
 
-      for (let i = 0; i < count; i += 1) {
-        const baseEvent = pool[(seed + slotIndex * 7 + i * 11) % pool.length];
-        const offset = (i * 25 + slotIndex * 10) % 50;
-        slotSuggestions.push({
-          ...baseEvent,
-          id: `${baseEvent.id}-W${weekConfig.week}-D${selectedDay}-S${slotIndex}-${i}`,
-          sourceEventId: baseEvent.id,
-          time: buildSlotSuggestionTime(slot.time, offset),
-          match_score: `${82 + ((seed + slotIndex * 13 + i * 9) % 16)}%`,
+      map[slot.id] = selectedDayEvents
+        .filter((event) => {
+          if (!event.time || !String(event.time).includes(" - ")) return false;
+
+          try {
+            const eventRange = parseRange(event.time);
+            return eventRange.start >= slotStart && eventRange.end <= slotEnd;
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => {
+          const aModeMatch = a.category === focusMode ? 1 : 0;
+          const bModeMatch = b.category === focusMode ? 1 : 0;
+          if (aModeMatch !== bModeMatch) return bModeMatch - aModeMatch;
+
+          const aScore = Number.parseInt(String(a.match_score || "0"), 10) || 0;
+          const bScore = Number.parseInt(String(b.match_score || "0"), 10) || 0;
+          return bScore - aScore;
         });
-      }
-
-      map[slot.id] = slotSuggestions;
     });
 
     return map;
-  }, [freeSlots, selectedDay, weekConfig.week]);
+  }, [freeSlots, focusMode, selectedDayEvents]);
 
-  const totalMatchingEvents = Object.values(slotEventMap).reduce(
-    (sum, list) => sum + list.length,
-    0,
+  const recommendedFreeSlots = freeSlots.filter(
+    (slot) => (slotEventMap[slot.id] || []).length > 0,
   );
 
-  const selectedDateISO = `${dayDate.getFullYear()}-${pad2(dayDate.getMonth() + 1)}-${pad2(dayDate.getDate())}`;
+  const visibleSlots = slots.filter(
+    (slot) => slot.type !== "free" || (slotEventMap[slot.id] || []).length > 0,
+  );
 
-  const selectedDayEvents = useMemo(() => {
-    const exactDateMatches = events.filter(
-      (event) => String(event.date || "").slice(0, 10) === selectedDateISO,
-    );
-
-    if (exactDateMatches.length > 0) {
-      return exactDateMatches;
-    }
-
-    return events.filter((event) => {
-      if (!event.date) return false;
-      const eventDate = new Date(`${String(event.date).slice(0, 10)}T00:00:00`);
-      return (
-        !Number.isNaN(eventDate.getTime()) &&
-        eventDate.getDay() === selectedDay + 1
-      );
-    });
-  }, [selectedDateISO, selectedDay]);
+  const totalMatchingEvents = recommendedFreeSlots.reduce(
+    (sum, slot) => sum + (slotEventMap[slot.id] || []).length,
+    0,
+  );
 
   return (
     <div className="px-5 pt-6 pb-24">
@@ -476,9 +567,26 @@ export default function SchedulePage({
           const today = getLocalDateOnly();
           const displayedDate = getLocalDateOnly(displayedDayDate);
           const isToday = displayedDate.getTime() === today.getTime();
-          const hasFreeSlot =
-            timetableSynced &&
-            (activeSchedule[day] || []).some((slot) => slot.type === "free");
+          const dateISO = `${displayedDayDate.getFullYear()}-${pad2(
+            displayedDayDate.getMonth() + 1,
+          )}-${pad2(displayedDayDate.getDate())}`;
+          const eventsForDate = scheduleEvents.filter(
+            (event) => String(event.date || "").slice(0, 10) === dateISO,
+          );
+
+          const freeSlotsForDate = timetableSynced
+            ? (activeSchedule[day] || []).filter((slot) => slot.type === "free")
+            : [];
+
+          const hasEvents = eventsForDate.length > 0;
+
+          const hasRecommendedEvent =
+            hasEvents &&
+            freeSlotsForDate.some((freeSlot) =>
+              eventsForDate.some((event) =>
+                eventFitsInsideFreeSlot(event, freeSlot),
+              ),
+            );
 
           return (
             <motion.button
@@ -513,77 +621,26 @@ export default function SchedulePage({
                   Today
                 </span>
               )}
-              {hasFreeSlot && !isActive && (
-                <div className="absolute -bottom-0.5 h-1 w-1 rounded-full bg-balance-accent" />
+              {hasEvents && !isActive && (
+                <span
+                  className={`absolute -bottom-0.5 h-1.5 w-1.5 rounded-full ${
+                    hasRecommendedEvent
+                      ? "bg-balance-accent shadow-glow-green"
+                      : "bg-taylor-red"
+                  }`}
+                  title={
+                    hasRecommendedEvent
+                      ? "Event recommendation available"
+                      : "Events available, but none match a free slot"
+                  }
+                />
               )}
             </motion.button>
           );
         })}
       </div>
 
-      {!timetableSynced ? (
-        <div className="glass rounded-2xl p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-outfit font-semibold text-white">
-                Campus Events
-              </h3>
-              <p className="mt-1 text-[11px] font-inter text-gray-500">
-                {dayName},{" "}
-                {dayDate.toLocaleDateString("en-MY", {
-                  day: "numeric",
-                  month: "short",
-                  year: "numeric",
-                })}
-              </p>
-            </div>
-            <span className="text-[10px] font-inter text-gray-500">
-              {selectedDayEvents.length} event
-              {selectedDayEvents.length === 1 ? "" : "s"}
-            </span>
-          </div>
-
-          {selectedDayEvents.length === 0 ? (
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
-              <p className="text-sm font-outfit font-semibold text-white">
-                No events for this day
-              </p>
-              <p className="mt-1 text-[11px] font-inter text-gray-500">
-                Select another day in the event calendar.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {selectedDayEvents.map((event) => (
-                <button
-                  key={event.id}
-                  type="button"
-                  onClick={() => onEventClick?.(event)}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-outfit font-semibold text-white">
-                        {event.title}
-                      </p>
-                      <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
-                        {event.host || "Campus Event"} •{" "}
-                        {event.location || "Location TBC"}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-[9px] font-inter text-gray-500">
-                      {event.date || "Date TBC"}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[10px] font-inter text-gray-400">
-                    {event.time || "Time TBC"}
-                  </p>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
+      {timetableSynced && (
         <>
           {/* Timetable Timeline */}
           <div className="relative">
@@ -601,7 +658,7 @@ export default function SchedulePage({
                 </div>
               )}
 
-              {slots.map((slot, index) => {
+              {visibleSlots.map((slot, index) => {
                 const isFree = slot.type === "free";
                 const [startTime, endTime] = slot.time.split(" - ");
 
@@ -667,13 +724,17 @@ export default function SchedulePage({
                             </span>
                             <span className="text-[10px] font-inter font-medium text-balance-accent/80">
                               AI found {(slotEventMap[slot.id] || []).length}{" "}
-                              events for this slot
+                              event
+                              {(slotEventMap[slot.id] || []).length === 1
+                                ? ""
+                                : "s"}{" "}
+                              for this slot
                             </span>
                           </div>
                           <SwipeableEventRow>
                             {(slotEventMap[slot.id] || []).map((event) => (
                               <button
-                                key={event.id}
+                                key={`${event.sourceTable}-${event.sourceId}`}
                                 type="button"
                                 onClick={() => onEventClick?.(event)}
                                 className="min-w-[138px] max-w-[150px] flex-shrink-0 snap-start rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 transition-colors hover:bg-white/10"
@@ -706,33 +767,138 @@ export default function SchedulePage({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5 }}
-            className="mt-6 glass rounded-2xl p-4"
+            className="mt-6 mb-5 glass rounded-2xl p-4"
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-outfit font-semibold text-white">
-                  {freeSlots.length} Free Slot
-                  {freeSlots.length !== 1 ? "s" : ""} Today
+                  {recommendedFreeSlots.length} Free Slot
+                  {recommendedFreeSlots.length === 1 ? "" : "s"} Today
                 </h3>
                 <p className="text-[11px] font-inter text-gray-500">
-                  {freeSlots.length > 0
-                    ? `${totalMatchingEvents} matched events available`
-                    : "No free time detected — all slots booked"}
+                  {totalMatchingEvents} matched event
+                  {totalMatchingEvents === 1 ? "" : "s"} available
                 </p>
               </div>
+
               <div
-                className={`rounded-lg px-3 py-1.5 text-[10px] font-inter font-bold ${
-                  freeSlots.length > 0
-                    ? "border border-balance-accent/20 bg-balance-accent/10 text-balance-accent"
-                    : "bg-white/5 text-gray-500"
+                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[10px] font-inter font-bold ${
+                  recommendedFreeSlots.length > 0
+                    ? "border-balance-accent/20 bg-balance-accent/10 text-balance-accent"
+                    : "border-yellow-400/20 bg-yellow-400/10 text-yellow-300"
                 }`}
               >
-                {freeSlots.length > 0 ? "🟢 Available" : "🔴 Full Day"}
+                <span className="relative flex h-2 w-2">
+                  <span
+                    className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+                      recommendedFreeSlots.length > 0
+                        ? "bg-balance-accent"
+                        : "bg-yellow-400"
+                    }`}
+                  />
+                  <span
+                    className={`relative inline-flex h-2 w-2 rounded-full ${
+                      recommendedFreeSlots.length > 0
+                        ? "bg-balance-accent"
+                        : "bg-yellow-400"
+                    }`}
+                  />
+                </span>
+                <span>
+                  {recommendedFreeSlots.length > 0
+                    ? "Free Slot Available"
+                    : "No Event Recommendation"}
+                </span>
               </div>
             </div>
           </motion.div>
         </>
       )}
+
+      <div className="glass rounded-2xl p-4 mb-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-outfit font-semibold text-white">
+              Today Events
+            </h3>
+            <p className="mt-1 text-[11px] font-inter text-gray-500">
+              {dayName},{" "}
+              {dayDate.toLocaleDateString("en-MY", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })}
+            </p>
+          </div>
+          <span className="text-[10px] font-inter text-gray-500">
+            {selectedDayEvents.length} event
+            {selectedDayEvents.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {eventsLoading ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
+            <p className="text-sm font-outfit font-semibold text-white">
+              Loading events…
+            </p>
+          </div>
+        ) : eventsError ? (
+          <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 px-4 py-6 text-center">
+            <p className="text-[11px] font-inter text-yellow-300">
+              {eventsError}
+            </p>
+          </div>
+        ) : selectedDayEvents.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
+            <p className="text-sm font-outfit font-semibold text-white">
+              No events for this day
+            </p>
+            <p className="mt-1 text-[11px] font-inter text-gray-500">
+              Select another day in the event calendar.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {selectedDayEvents.map((event) => (
+              <button
+                key={event.id}
+                type="button"
+                onClick={() => onEventClick?.(event)}
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-outfit font-semibold text-white">
+                      {event.title}
+                    </p>
+                    <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
+                      {event.host || "Campus Event"} •{" "}
+                      {event.location || "Location TBC"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="text-[9px] font-inter text-gray-500">
+                      {event.date || "Date TBC"}
+                    </span>
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[8px] font-inter font-medium ${
+                        event.eventType === "club"
+                          ? "bg-purple-400/10 text-purple-300"
+                          : "bg-taylor-red/10 text-red-300"
+                      }`}
+                    >
+                      {event.eventType === "club" ? "Club" : "Campus"}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-1 text-[10px] font-inter text-gray-400">
+                  {event.time || "Time TBC"}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

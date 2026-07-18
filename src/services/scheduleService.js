@@ -144,7 +144,7 @@ function toDatabaseTime(totalMinutes) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
 }
 
-export function addDetectedFreeSlots(weeklySchedule, dayStart = "08:00", dayEnd = "17:00") {
+export function addDetectedFreeSlots(weeklySchedule, dayStart = "00:00", dayEnd = "23:59") {
   const startBoundary = toMinutes(dayStart);
   const endBoundary = toMinutes(dayEnd);
   const result = {};

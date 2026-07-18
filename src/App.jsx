@@ -1044,6 +1044,7 @@ export default function App() {
                         programme={currentProgramme}
                         timetableSynced={timetableSyncEnabled}
                         timetableSyncLoading={timetableSyncLoading}
+                        focusMode={currentUserKey.focus_mode || mode || "balance"}
                         onEventClick={handleEventClick}
                       />
                     </motion.div>
