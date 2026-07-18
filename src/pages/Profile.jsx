@@ -115,6 +115,10 @@ export default function Profile({
   const [statsLoading, setStatsLoading] = useState(true);
 
   const [activity, setActivity] = useState([]);
+  const [timetableSyncEnabled, setTimetableSyncEnabled] = useState(false);
+  const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
+  const [timetableSyncSaving, setTimetableSyncSaving] = useState(false);
+  const [timetableSyncError, setTimetableSyncError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -279,10 +283,12 @@ export default function Profile({
     };
   }, [userKey]);
 
+
   const profileInitial = useMemo(
     () => (displayName?.[0] || "S").toUpperCase(),
     [displayName],
   );
+
 
   const handleLogoutClick = () => {
     onLogout?.();
@@ -434,6 +440,7 @@ export default function Profile({
           </p>
         )}
       </div>
+
 
       {/* My Data Section */}
       <div ref={dataRef} className="rounded-2xl p-6 bg-[#0a0506]">

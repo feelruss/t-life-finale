@@ -16,10 +16,6 @@ import { leaderboardData } from "./data/leaderboard";
 import LeaderboardRow from "./components/LeaderboardRow";
 import LandingPage from "./pages/LandingPage";
 import {
-  timetable as defaultTimetable,
-  weeklyTimetable as defaultWeeklyTimetable,
-} from "./data/events";
-import {
   initializeDB,
   toggleEventCheckIn,
   getAIMeterState,
@@ -43,6 +39,10 @@ import Chatbot from "./components/Chatbot";
 import { supabase } from "./components/GoogleLogin";
 import { getCurrentSupabaseUser } from "./libs/auth";
 import { createStudentActivity } from "./services/studentActivityService";
+import {
+  fetchTimetableSyncSetting,
+  timetableSyncEventName,
+} from "./services/timetableSyncService";
 
 const saveStudentActivity = (activity) => {
   createStudentActivity(activity).catch((error) => {
@@ -108,6 +108,8 @@ export default function App() {
   const [privacySettings, setPrivacySettings] = useState(() =>
     getPrivacySettings("guest", { shareTimetable: true }),
   );
+  const [timetableSyncEnabled, setTimetableSyncEnabled] = useState(false);
+  const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
   const [rsvpEventIds, setRsvpEventIds] = useState(() =>
     getUserRSVPEventIds("guest"),
   );
@@ -306,6 +308,8 @@ export default function App() {
         setCurrentEmail("");
         setCurrentProgramme("");
         setCurrentUserKey("guest");
+        setTimetableSyncEnabled(false);
+        setTimetableSyncLoading(false);
         setAiMeter(loadMeterForUser("guest"));
         setCurrentScreen("landing");
         return;
@@ -386,6 +390,69 @@ export default function App() {
 
   useEffect(() => {
     setTimetableProfile(getUserTimetableProfile(currentUserKey));
+  }, [currentUserKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTimetableSync = async () => {
+      if (!currentUserKey || currentUserKey === "guest") {
+        if (!cancelled) {
+          setTimetableSyncEnabled(false);
+          setTimetableSyncLoading(false);
+        }
+        return;
+      }
+
+      setTimetableSyncLoading(true);
+
+      try {
+        const enabled = await fetchTimetableSyncSetting(currentUserKey);
+        if (!cancelled) setTimetableSyncEnabled(enabled);
+      } catch (error) {
+        console.error("Unable to load timetable sync setting:", error);
+        if (!cancelled) setTimetableSyncEnabled(false);
+      } finally {
+        if (!cancelled) setTimetableSyncLoading(false);
+      }
+    };
+
+    void loadTimetableSync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserKey]);
+
+  useEffect(() => {
+    const handleTimetableSyncUpdate = (event) => {
+      const updatedStudentId = event?.detail?.studentId;
+      const enabled = event?.detail?.enabled;
+
+      if (
+        updatedStudentId &&
+        String(updatedStudentId) !== String(currentUserKey)
+      ) {
+        return;
+      }
+
+      if (typeof enabled === "boolean") {
+        setTimetableSyncEnabled(enabled);
+        setTimetableSyncLoading(false);
+      }
+    };
+
+    window.addEventListener(
+      timetableSyncEventName,
+      handleTimetableSyncUpdate,
+    );
+
+    return () => {
+      window.removeEventListener(
+        timetableSyncEventName,
+        handleTimetableSyncUpdate,
+      );
+    };
   }, [currentUserKey]);
 
   useEffect(() => {
@@ -612,6 +679,8 @@ export default function App() {
       setDisplayName("Student");
       setCurrentProgramme("");
       setCurrentUserKey("guest");
+      setTimetableSyncEnabled(false);
+      setTimetableSyncLoading(false);
       setAiMeter(loadMeterForUser("guest"));
       setMode("focus");
       setActiveTab("home");
@@ -717,13 +786,9 @@ export default function App() {
   ];
 
   const isDarkTheme = true;
-  const timetableSyncEnabled = privacySettings.shareTimetable !== false;
   const activeDailyTimetable = timetableSyncEnabled
     ? timetableProfile.today
-    : defaultTimetable;
-  const activeWeeklyTimetable = timetableSyncEnabled
-    ? timetableProfile.weekly
-    : defaultWeeklyTimetable;
+    : [];
 
   return (
     <div
@@ -972,13 +1037,13 @@ export default function App() {
                       className="min-h-full"
                     >
                       <SchedulePage
-                        weeklyData={activeWeeklyTimetable}
                         userKey={currentUserKey}
                         userId={
                           currentUserKey !== "guest" ? currentUserKey : null
                         }
                         programme={currentProgramme}
                         timetableSynced={timetableSyncEnabled}
+                        timetableSyncLoading={timetableSyncLoading}
                         onEventClick={handleEventClick}
                       />
                     </motion.div>

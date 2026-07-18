@@ -169,12 +169,12 @@ function SwipeableEventRow({ children }) {
     </div>
   );
 }
-
 export default function SchedulePage({
   onEventClick,
   userId = null,
   programme = "",
   timetableSynced = true,
+  timetableSyncLoading = false,
 }) {
   const initialSelection = useMemo(() => getInitialScheduleSelection(), []);
 
@@ -192,7 +192,7 @@ export default function SchedulePage({
     const emptySchedule = Object.fromEntries(days.map((day) => [day, []]));
 
     const loadSchedule = async () => {
-      if (!userId && !programme) {
+      if (!timetableSynced || (!userId && !programme)) {
         setDatabaseSchedule(emptySchedule);
         return;
       }
@@ -229,7 +229,7 @@ export default function SchedulePage({
     return () => {
       cancelled = true;
     };
-  }, [userId, programme]);
+  }, [userId, programme, timetableSynced]);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,6 +321,27 @@ export default function SchedulePage({
     0,
   );
 
+  const selectedDateISO = `${dayDate.getFullYear()}-${pad2(dayDate.getMonth() + 1)}-${pad2(dayDate.getDate())}`;
+
+  const selectedDayEvents = useMemo(() => {
+    const exactDateMatches = events.filter(
+      (event) => String(event.date || "").slice(0, 10) === selectedDateISO,
+    );
+
+    if (exactDateMatches.length > 0) {
+      return exactDateMatches;
+    }
+
+    return events.filter((event) => {
+      if (!event.date) return false;
+      const eventDate = new Date(`${String(event.date).slice(0, 10)}T00:00:00`);
+      return (
+        !Number.isNaN(eventDate.getTime()) &&
+        eventDate.getDay() === selectedDay + 1
+      );
+    });
+  }, [selectedDateISO, selectedDay]);
+
   return (
     <div className="px-5 pt-6 pb-24">
       {/* Header */}
@@ -334,14 +355,42 @@ export default function SchedulePage({
           </p>
         </div>
         <div className="flex items-center gap-1">
-          <span className="relative flex h-2 w-2 mr-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-balance-accent opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-balance-accent"></span>
+          <span className="relative mr-2 flex h-2 w-2">
+            <span
+              className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+                timetableSyncLoading
+                  ? "bg-gray-400"
+                  : timetableSynced
+                    ? "bg-balance-accent"
+                    : "bg-yellow-400"
+              }`}
+            />
+
+            <span
+              className={`relative inline-flex h-2 w-2 rounded-full ${
+                timetableSyncLoading
+                  ? "bg-gray-400"
+                  : timetableSynced
+                    ? "bg-balance-accent"
+                    : "bg-yellow-400"
+              }`}
+            />
           </span>
+
           <span
-            className={`text-[10px] font-inter font-medium ${timetableSynced ? "text-balance-accent" : "text-amber-300"}`}
+            className={`text-[10px] font-inter font-medium ${
+              timetableSyncLoading
+                ? "text-gray-400"
+                : timetableSynced
+                  ? "text-balance-accent"
+                  : "text-yellow-400"
+            }`}
           >
-            {timetableSynced ? "CAMS Synced" : "Sync Off (Local Schedule)"}
+            {timetableSyncLoading
+              ? "Checking Sync"
+              : timetableSynced
+                ? "CAMS Synced"
+                : "Sync Off"}
           </span>
         </div>
       </div>
@@ -382,8 +431,10 @@ export default function SchedulePage({
         )}
       </div>
 
+      {/* Event calendar remains visible in both sync modes. */}
       <div className="glass rounded-xl p-2.5 mb-5 flex items-center justify-between">
         <button
+          type="button"
           onClick={() => setSelectedWeek((prev) => Math.max(0, prev - 1))}
           disabled={selectedWeek === 0}
           className="p-2 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -393,13 +444,14 @@ export default function SchedulePage({
         </button>
         <div className="text-center">
           <p className="text-[10px] font-inter text-gray-500 uppercase tracking-wider">
-            Academic Timeline
+            {timetableSynced ? "Academic Timeline" : "Event Calendar"}
           </p>
           <p className="text-sm font-outfit font-semibold text-white">
             Week {weekConfig.week}
           </p>
         </div>
         <button
+          type="button"
           onClick={() =>
             setSelectedWeek((prev) =>
               Math.min(weekConfigs.length - 1, prev + 1),
@@ -417,21 +469,21 @@ export default function SchedulePage({
       <div className="flex gap-2 mb-6">
         {days.map((day, index) => {
           const dayShort = day.slice(0, 3);
-          const dayDate = new Date(weekStart);
-          dayDate.setDate(weekStart.getDate() + index);
+          const displayedDayDate = new Date(weekStart);
+          displayedDayDate.setDate(weekStart.getDate() + index);
           const isActive = selectedDay === index;
 
           const today = getLocalDateOnly();
-          const displayedDate = getLocalDateOnly(dayDate);
+          const displayedDate = getLocalDateOnly(displayedDayDate);
           const isToday = displayedDate.getTime() === today.getTime();
-
-          const hasFreeSlot = (activeSchedule[day] || []).some(
-            (s) => s.type === "free",
-          );
+          const hasFreeSlot =
+            timetableSynced &&
+            (activeSchedule[day] || []).some((slot) => slot.type === "free");
 
           return (
             <motion.button
               key={day}
+              type="button"
               whileTap={{ scale: 0.95 }}
               onClick={() => setSelectedDay(index)}
               className={`flex-1 py-3 rounded-xl flex flex-col items-center gap-1 transition-all duration-300 relative ${
@@ -444,9 +496,11 @@ export default function SchedulePage({
                 {dayShort}
               </span>
               <span
-                className={`text-sm font-outfit font-bold ${isActive ? "text-white" : "text-gray-300"}`}
+                className={`text-sm font-outfit font-bold ${
+                  isActive ? "text-white" : "text-gray-300"
+                }`}
               >
-                {dayDate.getDate()}
+                {displayedDayDate.getDate()}
               </span>
               {isToday && (
                 <span
@@ -459,176 +513,226 @@ export default function SchedulePage({
                   Today
                 </span>
               )}
-
               {hasFreeSlot && !isActive && (
-                <div className="absolute -bottom-0.5 w-1 h-1 rounded-full bg-balance-accent" />
+                <div className="absolute -bottom-0.5 h-1 w-1 rounded-full bg-balance-accent" />
               )}
             </motion.button>
           );
         })}
       </div>
 
-      {/* Timeline */}
-      <div className="relative">
-        {/* Vertical timeline line */}
-        <div className="absolute left-[22px] top-0 bottom-0 w-[2px] bg-white/5" />
-
-        <div className="space-y-3">
-          {slots.length === 0 && (
-            <div className="ml-[60px] rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-center">
-              <p className="text-sm font-outfit font-semibold text-white">
-                No timetable available
-              </p>
-
+      {!timetableSynced ? (
+        <div className="glass rounded-2xl p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-outfit font-semibold text-white">
+                Campus Events
+              </h3>
               <p className="mt-1 text-[11px] font-inter text-gray-500">
-                No classes were found for {programme || "this programme"}.
+                {dayName},{" "}
+                {dayDate.toLocaleDateString("en-MY", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })}
               </p>
             </div>
-          )}
-          {slots.map((slot, index) => {
-            const isFree = slot.type === "free";
-            const startTime = slot.time.split(" - ")[0];
-            const endTime = slot.time.split(" - ")[1];
+            <span className="text-[10px] font-inter text-gray-500">
+              {selectedDayEvents.length} event
+              {selectedDayEvents.length === 1 ? "" : "s"}
+            </span>
+          </div>
 
-            return (
-              <motion.div
-                key={slot.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.08 }}
-                className="flex items-start gap-4"
-              >
-                {/* Time dot */}
-                <div className="flex flex-col items-center flex-shrink-0 w-[44px]">
-                  <div
-                    className={`w-3 h-3 rounded-full border-2 z-10 ${
-                      isFree
-                        ? "bg-balance-accent border-balance-accent shadow-glow-green"
-                        : "bg-[#0a0a12] border-white/20"
-                    }`}
-                  />
-                  <span className="text-[9px] font-inter text-gray-600 mt-1">
-                    {startTime}
-                  </span>
-                </div>
-
-                {/* Slot card */}
-                <div
-                  className={`flex-1 rounded-xl p-4 transition-all duration-300 ${
-                    isFree
-                      ? "bg-gradient-to-r from-balance-accent/10 to-balance-accent/5 border border-balance-accent/20"
-                      : "glass"
-                  }`}
+          {selectedDayEvents.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-8 text-center">
+              <p className="text-sm font-outfit font-semibold text-white">
+                No events for this day
+              </p>
+              <p className="mt-1 text-[11px] font-inter text-gray-500">
+                Select another day in the event calendar.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {selectedDayEvents.map((event) => (
+                <button
+                  key={event.id}
+                  type="button"
+                  onClick={() => onEventClick?.(event)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <h3
-                      className={`text-sm font-outfit font-semibold ${
-                        isFree ? "text-balance-accent" : "text-white"
-                      }`}
-                    >
-                      {slot.subject}
-                    </h3>
-                    <span className="text-[10px] font-inter text-gray-500">
-                      {startTime} – {endTime}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-outfit font-semibold text-white">
+                        {event.title}
+                      </p>
+                      <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
+                        {event.host || "Campus Event"} •{" "}
+                        {event.location || "Location TBC"}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[9px] font-inter text-gray-500">
+                      {event.date || "Date TBC"}
                     </span>
                   </div>
+                  <p className="mt-1 text-[10px] font-inter text-gray-400">
+                    {event.time || "Time TBC"}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Timetable Timeline */}
+          <div className="relative">
+            <div className="absolute left-[22px] top-0 bottom-0 w-[2px] bg-white/5" />
 
-                  {slot.room && (
-                    <p className="text-[11px] font-inter text-gray-500 flex items-center gap-1">
-                      📍 {slot.room}
-                    </p>
-                  )}
-
-                  {slot.zone && (
-                    <span className="inline-block text-[9px] font-inter text-gray-600 mt-1 px-2 py-0.5 rounded bg-white/5">
-                      Zone: {slot.zone}
-                    </span>
-                  )}
-
-                  {isFree && (
-                    <div className="mt-3 pt-3 border-t border-balance-accent/10">
-                      {(() => {
-                        const matchingEvents = slotEventMap[slot.id] || [];
-                        return (
-                          <>
-                            <div className="flex items-center gap-1.5 mb-2">
-                              <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-balance-accent opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-balance-accent"></span>
-                              </span>
-                              <span className="text-[10px] font-inter text-balance-accent/80 font-medium">
-                                AI found {matchingEvents.length} events for this
-                                slot
-                              </span>
-                            </div>
-                            <SwipeableEventRow>
-                              {matchingEvents.map((evt) => (
-                                <button
-                                  key={evt.id}
-                                  type="button"
-                                  onClick={() => onEventClick?.(evt)}
-                                  className="flex-shrink-0 px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 min-w-[138px] max-w-[150px] snap-start hover:bg-white/10 transition-colors"
-                                >
-                                  <p className="text-[9px] font-inter font-bold text-green-400 mb-0.5">
-                                    {evt.match_score || "—"} Match
-                                  </p>
-                                  <p className="text-[10px] font-outfit font-semibold text-white truncate">
-                                    {evt.title}
-                                  </p>
-                                  <p className="text-[9px] font-inter text-gray-500">
-                                    {evt.host}
-                                  </p>
-                                  <p className="text-[8px] font-inter text-gray-500">
-                                    {evt.time || "TBD"}
-                                  </p>
-                                  <p className="text-[8px] font-inter text-gray-600 truncate mt-0.5">
-                                    {evt.description}
-                                  </p>
-                                </button>
-                              ))}
-                            </SwipeableEventRow>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
+            <div className="space-y-3">
+              {slots.length === 0 && (
+                <div className="ml-[60px] rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-center">
+                  <p className="text-sm font-outfit font-semibold text-white">
+                    No timetable available
+                  </p>
+                  <p className="mt-1 text-[11px] font-inter text-gray-500">
+                    No classes were found for {programme || "this programme"}.
+                  </p>
                 </div>
-              </motion.div>
-            );
-          })}
-        </div>
-      </div>
+              )}
 
-      {/* Free slots summary */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        className="mt-6 glass rounded-2xl p-4"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-outfit font-semibold text-white">
-              {freeSlots.length} Free Slot{freeSlots.length !== 1 ? "s" : ""}{" "}
-              Today
-            </h3>
-            <p className="text-[11px] font-inter text-gray-500">
-              {freeSlots.length > 0
-                ? `${totalMatchingEvents} matched events available`
-                : "No free time detected — all slots booked"}
-            </p>
+              {slots.map((slot, index) => {
+                const isFree = slot.type === "free";
+                const [startTime, endTime] = slot.time.split(" - ");
+
+                return (
+                  <motion.div
+                    key={slot.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.08 }}
+                    className="flex items-start gap-4"
+                  >
+                    <div className="flex w-[44px] flex-shrink-0 flex-col items-center">
+                      <div
+                        className={`z-10 h-3 w-3 rounded-full border-2 ${
+                          isFree
+                            ? "border-balance-accent bg-balance-accent shadow-glow-green"
+                            : "border-white/20 bg-[#0a0a12]"
+                        }`}
+                      />
+                      <span className="mt-1 text-[9px] font-inter text-gray-600">
+                        {startTime}
+                      </span>
+                    </div>
+
+                    <div
+                      className={`flex-1 rounded-xl p-4 transition-all duration-300 ${
+                        isFree
+                          ? "border border-balance-accent/20 bg-gradient-to-r from-balance-accent/10 to-balance-accent/5"
+                          : "glass"
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center justify-between">
+                        <h3
+                          className={`text-sm font-outfit font-semibold ${
+                            isFree ? "text-balance-accent" : "text-white"
+                          }`}
+                        >
+                          {slot.subject}
+                        </h3>
+                        <span className="text-[10px] font-inter text-gray-500">
+                          {startTime} – {endTime}
+                        </span>
+                      </div>
+
+                      {slot.room && (
+                        <p className="flex items-center gap-1 text-[11px] font-inter text-gray-500">
+                          📍 {slot.room}
+                        </p>
+                      )}
+
+                      {slot.zone && (
+                        <span className="mt-1 inline-block rounded bg-white/5 px-2 py-0.5 text-[9px] font-inter text-gray-600">
+                          Zone: {slot.zone}
+                        </span>
+                      )}
+
+                      {isFree && (
+                        <div className="mt-3 border-t border-balance-accent/10 pt-3">
+                          <div className="mb-2 flex items-center gap-1.5">
+                            <span className="relative flex h-2 w-2">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-balance-accent opacity-75" />
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-balance-accent" />
+                            </span>
+                            <span className="text-[10px] font-inter font-medium text-balance-accent/80">
+                              AI found {(slotEventMap[slot.id] || []).length}{" "}
+                              events for this slot
+                            </span>
+                          </div>
+                          <SwipeableEventRow>
+                            {(slotEventMap[slot.id] || []).map((event) => (
+                              <button
+                                key={event.id}
+                                type="button"
+                                onClick={() => onEventClick?.(event)}
+                                className="min-w-[138px] max-w-[150px] flex-shrink-0 snap-start rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 transition-colors hover:bg-white/10"
+                              >
+                                <p className="mb-0.5 text-[9px] font-inter font-bold text-green-400">
+                                  {event.match_score || "—"} Match
+                                </p>
+                                <p className="truncate text-[10px] font-outfit font-semibold text-white">
+                                  {event.title}
+                                </p>
+                                <p className="text-[9px] font-inter text-gray-500">
+                                  {event.host}
+                                </p>
+                                <p className="text-[8px] font-inter text-gray-500">
+                                  {event.time || "TBD"}
+                                </p>
+                              </button>
+                            ))}
+                          </SwipeableEventRow>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
           </div>
-          <div
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-inter font-bold ${
-              freeSlots.length > 0
-                ? "bg-balance-accent/10 text-balance-accent border border-balance-accent/20"
-                : "bg-white/5 text-gray-500"
-            }`}
+
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+            className="mt-6 glass rounded-2xl p-4"
           >
-            {freeSlots.length > 0 ? "🟢 Available" : "🔴 Full Day"}
-          </div>
-        </div>
-      </motion.div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-outfit font-semibold text-white">
+                  {freeSlots.length} Free Slot
+                  {freeSlots.length !== 1 ? "s" : ""} Today
+                </h3>
+                <p className="text-[11px] font-inter text-gray-500">
+                  {freeSlots.length > 0
+                    ? `${totalMatchingEvents} matched events available`
+                    : "No free time detected — all slots booked"}
+                </p>
+              </div>
+              <div
+                className={`rounded-lg px-3 py-1.5 text-[10px] font-inter font-bold ${
+                  freeSlots.length > 0
+                    ? "border border-balance-accent/20 bg-balance-accent/10 text-balance-accent"
+                    : "bg-white/5 text-gray-500"
+                }`}
+              >
+                {freeSlots.length > 0 ? "🟢 Available" : "🔴 Full Day"}
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
     </div>
   );
 }

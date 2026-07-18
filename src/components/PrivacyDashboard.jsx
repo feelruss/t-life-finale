@@ -1,27 +1,98 @@
 import { motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Shield, Eye, Trash2, Download, ChevronRight } from 'lucide-react';
 import { currentUser } from '../data/students';
-import { clearUserData, getClubMemberships, getEventCheckIns, getEventPreferences, getPrivacySettings, setPrivacySetting } from '../data/db';
+import { clearUserData, getClubMemberships, getEventCheckIns, getEventPreferences } from '../data/db';
 import { clubs } from '../data/clubs';
+import {
+    fetchTimetableSyncSetting,
+    updateTimetableSyncSetting,
+    timetableSyncEventName,
+} from '../services/timetableSyncService';
 
 export default function PrivacyDashboard({ displayName = 'Student', userKey = 'guest' }) {
     const defaultClubIds = clubs.filter((club) => club.isJoined).map((club) => club.id);
-    const [settings, setSettings] = useState(() => getPrivacySettings(userKey, { shareTimetable: true }));
+    const [settings, setSettings] = useState({ shareTimetable: false });
+    const [timetableSyncLoading, setTimetableSyncLoading] = useState(true);
+    const [timetableSyncSaving, setTimetableSyncSaving] = useState(false);
+    const [timetableSyncError, setTimetableSyncError] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [activeCategory, setActiveCategory] = useState(null);
 
-    const toggleSetting = (key) => {
-        const nextValue = !settings[key];
-        setSettings(prev => ({ ...prev, [key]: nextValue }));
-        setPrivacySetting(key, nextValue, userKey);
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadTimetableSync = async () => {
+            if (!userKey || userKey === 'guest') {
+                if (!cancelled) {
+                    setSettings({ shareTimetable: false });
+                    setTimetableSyncLoading(false);
+                }
+                return;
+            }
+
+            setTimetableSyncLoading(true);
+            setTimetableSyncError('');
+
+            try {
+                const enabled = await fetchTimetableSyncSetting(userKey);
+                if (!cancelled) {
+                    setSettings({ shareTimetable: enabled });
+                }
+            } catch (error) {
+                console.error('Unable to load timetable sync setting:', error);
+                if (!cancelled) {
+                    setTimetableSyncError(error.message || 'Unable to load timetable sync setting.');
+                }
+            } finally {
+                if (!cancelled) setTimetableSyncLoading(false);
+            }
+        };
+
+        const handleSyncUpdate = (event) => {
+            const updatedStudentId = event?.detail?.studentId;
+            if (updatedStudentId && String(updatedStudentId) !== String(userKey)) return;
+            if (typeof event?.detail?.enabled === 'boolean') {
+                setSettings({ shareTimetable: event.detail.enabled });
+                setTimetableSyncLoading(false);
+            }
+        };
+
+        void loadTimetableSync();
+        window.addEventListener(timetableSyncEventName, handleSyncUpdate);
+
+        return () => {
+            cancelled = true;
+            window.removeEventListener(timetableSyncEventName, handleSyncUpdate);
+        };
+    }, [userKey]);
+
+    const toggleSetting = async (key) => {
+        if (key !== 'shareTimetable' || timetableSyncLoading || timetableSyncSaving || !userKey || userKey === 'guest') return;
+
+        const previousValue = settings.shareTimetable;
+        const nextValue = !previousValue;
+        setSettings({ shareTimetable: nextValue });
+        setTimetableSyncSaving(true);
+        setTimetableSyncError('');
+
+        try {
+            const savedValue = await updateTimetableSyncSetting(userKey, nextValue);
+            setSettings({ shareTimetable: savedValue });
+        } catch (error) {
+            console.error('Unable to update timetable sync setting:', error);
+            setSettings({ shareTimetable: previousValue });
+            setTimetableSyncError(error.message || 'Unable to update timetable sync setting.');
+        } finally {
+            setTimetableSyncSaving(false);
+        }
     };
 
     const settingsConfig = [
         {
             key: 'shareTimetable',
             label: 'Timetable Sync',
-            description: 'Use your synced timetable for free-slot detection and matching. Turn off to use local default schedule only.',
+            description: 'Sync your CAMS timetable for free-slot detection and event matching.',
             icon: '📅',
         },
     ];
@@ -90,9 +161,13 @@ export default function PrivacyDashboard({ displayName = 'Student', userKey = 'g
                                 </div>
                             </div>
                             <button
-                                onClick={() => toggleSetting(item.key)}
-                                className={`relative w-11 h-6 rounded-full transition-colors duration-300 flex-shrink-0 ml-3 ${settings[item.key] ? 'bg-taylor-red' : 'bg-white/10'
-                                    }`}
+                                type="button"
+                                role="switch"
+                                aria-checked={settings[item.key]}
+                                aria-label="Toggle timetable sync"
+                                disabled={timetableSyncLoading || timetableSyncSaving || !userKey || userKey === 'guest'}
+                                onClick={() => void toggleSetting(item.key)}
+                                className={`relative w-11 h-6 rounded-full border transition-all duration-300 flex-shrink-0 ml-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-taylor-red/60 ${settings[item.key] ? 'border-taylor-red bg-taylor-red' : 'border-white/15 bg-white/10'} ${timetableSyncLoading || timetableSyncSaving ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}
                             >
                                 <motion.div
                                     className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm"
@@ -103,6 +178,13 @@ export default function PrivacyDashboard({ displayName = 'Student', userKey = 'g
                         </motion.div>
                     ))}
                 </div>
+                {/*Show status under Timetable Sync*/}
+                {/* <div className="mt-2 flex items-center justify-between px-1">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${settings.shareTimetable ? 'text-green-400' : 'text-gray-500'}`}>
+                        {timetableSyncLoading ? 'Loading' : timetableSyncSaving ? 'Saving' : settings.shareTimetable ? 'Synced' : 'Events only'}
+                    </span>
+                    {timetableSyncError && <span className="text-[10px] text-red-400">{timetableSyncError}</span>}
+                </div> */}
             </div>
 
             {/* Data Inventory */}
@@ -225,7 +307,7 @@ export default function PrivacyDashboard({ displayName = 'Student', userKey = 'g
                                 <button
                                     onClick={() => {
                                         clearUserData();
-                                        setSettings(getPrivacySettings(userKey, { shareTimetable: true }));
+                                        setSettings({ shareTimetable: false });
                                         setActiveCategory(null);
                                         setShowDeleteModal(false);
                                         alert('✅ All data has been deleted.');
