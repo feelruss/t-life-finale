@@ -4,18 +4,31 @@ import { X, Bell, Check } from 'lucide-react';
 import { getNotifications, getUnreadNotificationCount, markAllNotificationsRead, markNotificationRead, clearNotifications } from '../data/db';
 
 export default function NotificationCenter({ isOpen, onClose, userKey = 'guest' }) {
-    const [notifs, setNotifs] = useState(() => getNotifications(userKey));
+    const filterFutureRsvpNotifs = (list) => {
+        const today = new Date().toISOString().slice(0, 10);
+        return (Array.isArray(list) ? list : []).filter((item) => {
+            if (item?.type === 'event-rsvp-removed') return false;
+            if (item?.type !== 'event-rsvp') return true;
+            const eventDate = String(item?.eventDate || '').slice(0, 10);
+            if (!eventDate) return true;
+            return eventDate >= today;
+        });
+    };
+
+    const [notifs, setNotifs] = useState(() =>
+        filterFutureRsvpNotifs(getNotifications(userKey)),
+    );
     const unreadCount = getUnreadNotificationCount(userKey);
 
     useEffect(() => {
-        setNotifs(getNotifications(userKey));
+        setNotifs(filterFutureRsvpNotifs(getNotifications(userKey)));
     }, [userKey]);
 
     useEffect(() => {
         const onDataUpdate = (evt) => {
             const updatedKey = evt?.detail?.key || '';
             if (String(updatedKey).startsWith('taylors_notifications')) {
-                setNotifs(getNotifications(userKey));
+                setNotifs(filterFutureRsvpNotifs(getNotifications(userKey)));
             }
         };
 
@@ -25,12 +38,12 @@ export default function NotificationCenter({ isOpen, onClose, userKey = 'guest' 
 
     const markAsRead = (id) => {
         markNotificationRead(id, userKey);
-        setNotifs(getNotifications(userKey));
+        setNotifs(filterFutureRsvpNotifs(getNotifications(userKey)));
     };
 
     const markAllRead = () => {
         markAllNotificationsRead(userKey);
-        setNotifs(getNotifications(userKey));
+        setNotifs(filterFutureRsvpNotifs(getNotifications(userKey)));
     };
 
     const clearAll = () => {

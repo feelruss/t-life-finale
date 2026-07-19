@@ -71,8 +71,8 @@ export const clubs = [
         frequency: "Weekly",
         contact: "robotics@taylors.edu.my",
         upcomingEvents: [
-            { title: "Arduino Sensor Workshop", date: "2026-07-03", time: "6:00 PM - 8:30 PM", place: "Block E, Lab 2" },
-            { title: "Mini Bot Challenge", date: "2026-07-10", time: "6:00 PM - 9:00 PM", place: "Block E, Maker Space" },
+            { title: "Arduino Sensor Workshop", date: "2026-07-24", time: "6:00 PM - 8:30 PM", place: "Block E, Lab 2" },
+            { title: "Mini Bot Challenge", date: "2026-07-31", time: "6:00 PM - 9:00 PM", place: "Block E, Maker Space" },
         ],
     },
     {
@@ -109,8 +109,8 @@ export const clubs = [
         frequency: "Weekly",
         contact: "danceclub@taylors.edu.my",
         upcomingEvents: [
-            { title: "K-Pop Choreo Session", date: "2026-07-03", time: "7:00 PM - 9:00 PM", place: "UniGym, Dance Studio" },
-            { title: "Open Performance Rehearsal", date: "2026-07-10", time: "7:00 PM - 9:30 PM", place: "Black Box Theatre" },
+            { title: "K-Pop Choreo Session", date: "2026-07-24", time: "7:00 PM - 9:00 PM", place: "UniGym, Dance Studio" },
+            { title: "Open Performance Rehearsal", date: "2026-07-31", time: "7:00 PM - 9:30 PM", place: "Black Box Theatre" },
         ],
     }
 ];
