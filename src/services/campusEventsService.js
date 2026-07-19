@@ -76,16 +76,36 @@ export function mapCampusEvent(row) {
   };
 }
 
+function todayISODate() {
+  // Local calendar day (not UTC) so MY evening doesn't drop "today" events.
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function isUpcomingOrUndated(event) {
+  const date = String(event?.date || "").slice(0, 10);
+  if (!date) return true;
+  return date >= todayISODate();
+}
+
 /**
  * Loads campus events from Supabase. Falls back to local mock events if
  * offline / RLS / empty so the homepage never looks broken in a demo.
+ * Prefers upcoming dates so Home recommendations match Schedule.
  */
-export async function fetchCampusEvents({ category } = {}) {
+export async function fetchCampusEvents({ category, upcomingOnly = true } = {}) {
   try {
     let query = supabase
       .from("campus_events")
       .select("*")
       .order("event_date", { ascending: true });
+
+    if (upcomingOnly) {
+      query = query.gte("event_date", todayISODate());
+    }
 
     if (category) {
       query = query.eq("category", category);
@@ -95,10 +115,27 @@ export async function fetchCampusEvents({ category } = {}) {
 
     if (error) throw error;
 
-    const mapped = (data || []).map(mapCampusEvent).filter(Boolean);
+    let mapped = (data || []).map(mapCampusEvent).filter(Boolean);
+
+    // If the DB still has only past rows, fall through without filter once.
+    if (mapped.length === 0 && upcomingOnly) {
+      const { data: allRows, error: allError } = await supabase
+        .from("campus_events")
+        .select("*")
+        .order("event_date", { ascending: true });
+      if (!allError) {
+        mapped = (allRows || []).map(mapCampusEvent).filter(Boolean);
+      }
+    }
 
     if (mapped.length > 0) {
-      return { events: mapped, source: "supabase" };
+      const events = upcomingOnly
+        ? mapped.filter(isUpcomingOrUndated)
+        : mapped;
+      return {
+        events: events.length > 0 ? events : mapped,
+        source: "supabase",
+      };
     }
   } catch (error) {
     console.warn("campus_events fetch failed, using local fallback:", error);
@@ -108,5 +145,12 @@ export async function fetchCampusEvents({ category } = {}) {
     ? localEvents.filter((event) => event.category === category)
     : localEvents;
 
-  return { events: fallback, source: "local" };
+  const upcoming = upcomingOnly
+    ? fallback.filter(isUpcomingOrUndated)
+    : fallback;
+
+  return {
+    events: upcoming.length > 0 ? upcoming : fallback,
+    source: "local",
+  };
 }

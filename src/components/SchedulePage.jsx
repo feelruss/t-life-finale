@@ -9,6 +9,8 @@ import {
 } from "../services/scheduleService";
 import { getUpcomingRSVPEvents } from "../services/rsvpService";
 import { getScheduleEvents } from "../services/eventScheduleService";
+import { getEventPreferences } from "../data/db";
+import { computePersonalizedMatch } from "../services/eventRecommendationService";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -93,38 +95,37 @@ function getLocalDateOnly(date = new Date()) {
 
 function getInitialScheduleSelection() {
   const today = getLocalDateOnly();
+  const currentDay = today.getDay(); // 0=Sun … 6=Sat
+
+  // On weekends the Mon–Fri strip looks empty — jump to next Monday's week
+  // so campus events (often starting next week) are visible immediately.
+  const anchor = new Date(today);
+  if (currentDay === 0) {
+    anchor.setDate(anchor.getDate() + 1); // Sunday → Monday
+  } else if (currentDay === 6) {
+    anchor.setDate(anchor.getDate() + 2); // Saturday → Monday
+  }
 
   const matchingWeekIndex = weekConfigs.findIndex((config) => {
     const weekStart = new Date(`${config.startDate}T00:00:00`);
     const weekEnd = new Date(weekStart);
-
-    // Include Saturday and Sunday as part of the same academic week.
     weekEnd.setDate(weekStart.getDate() + 6);
-
-    return today >= weekStart && today <= weekEnd;
+    return anchor >= weekStart && anchor <= weekEnd;
   });
 
   let selectedWeekIndex = matchingWeekIndex;
 
-  // If today is before the available timeline, show the first week.
   if (selectedWeekIndex === -1) {
     const firstWeekStart = new Date(`${weekConfigs[0].startDate}T00:00:00`);
-
-    selectedWeekIndex = today < firstWeekStart ? 0 : weekConfigs.length - 1;
+    selectedWeekIndex = anchor < firstWeekStart ? 0 : weekConfigs.length - 1;
   }
 
-  const currentDay = today.getDay();
-
   let selectedDayIndex;
+  const anchorDay = anchor.getDay();
 
-  if (currentDay >= 1 && currentDay <= 5) {
-    // Monday = 0 through Friday = 4.
-    selectedDayIndex = currentDay - 1;
-  } else if (currentDay === 6) {
-    // On Saturday, show Friday.
-    selectedDayIndex = 4;
+  if (anchorDay >= 1 && anchorDay <= 5) {
+    selectedDayIndex = anchorDay - 1;
   } else {
-    // On Sunday, show Monday.
     selectedDayIndex = 0;
   }
 
@@ -215,6 +216,7 @@ function SwipeableEventRow({ children }) {
 }
 export default function SchedulePage({
   onEventClick,
+  userKey = "guest",
   userId = null,
   programme = "",
   timetableSynced = true,
@@ -305,8 +307,18 @@ export default function SchedulePage({
           endDate: lastDate,
         });
 
+        const prefs = getEventPreferences(userKey || "guest");
+        const personalized = (rows || []).map((event) => {
+          const personal = computePersonalizedMatch(event, prefs, rows);
+          return {
+            ...event,
+            match_score: personal.match_score,
+            match_breakdown: personal.match_breakdown,
+          };
+        });
+
         if (!cancelled) {
-          setScheduleEvents(rows);
+          setScheduleEvents(personalized);
         }
       } catch (error) {
         if (cancelled) return;
@@ -322,12 +334,14 @@ export default function SchedulePage({
 
     loadEvents();
     window.addEventListener("taylors-events-updated", handleEventsUpdated);
+    window.addEventListener("taylors-db-updated", handleEventsUpdated);
 
     return () => {
       cancelled = true;
       window.removeEventListener("taylors-events-updated", handleEventsUpdated);
+      window.removeEventListener("taylors-db-updated", handleEventsUpdated);
     };
-  }, [selectedDay, selectedWeek]);
+  }, [selectedDay, selectedWeek, userKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -561,69 +575,99 @@ export default function SchedulePage({
           </div>
         ) : (
           <div className="space-y-2">
-            {upcomingRSVP.slice(0, 6).map((item) => (
-              <motion.button
-                key={item.rsvpId || `${item.sourceTable}-${item.sourceId}`}
-                type="button"
-                whileTap={{ scale: 0.98 }}
-                onClick={() => onEventClick?.(item)}
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-outfit font-semibold text-white">
-                      {item.title}
-                    </p>
+            {(() => {
+              const futureRSVPs = upcomingRSVP.filter((item) => !item.isPast);
+              const pastRSVPs = upcomingRSVP.filter((item) => item.isPast);
+              const list = futureRSVPs.length > 0 ? futureRSVPs : upcomingRSVP;
 
-                    <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
-                      {item.host || "Campus Event"}
+              return (
+                <>
+                  {futureRSVPs.length === 0 && pastRSVPs.length > 0 ? (
+                    <p className="pb-1 text-[10px] font-inter text-amber-300/90">
+                      No future RSVPs yet — showing past ones until you join an
+                      upcoming event. Dates are being kept in sync with Home.
                     </p>
-
-                    <p className="mt-1 truncate text-[10px] font-inter text-gray-400">
-                      📍 {item.location || "Location TBC"}
+                  ) : (
+                    <p className="pb-1 text-[10px] font-inter text-gray-500">
+                      {futureRSVPs.length} upcoming RSVP
+                      {futureRSVPs.length === 1 ? "" : "s"}
+                      {pastRSVPs.length > 0
+                        ? ` · ${pastRSVPs.length} past hidden`
+                        : ""}
                     </p>
-                  </div>
+                  )}
 
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[8px] font-inter font-semibold ${
-                        item.eventType === "club"
-                          ? "bg-purple-400/10 text-purple-300"
-                          : "bg-taylor-red/10 text-red-300"
-                      }`}
+                  {list.map((item) => (
+                    <motion.button
+                      key={
+                        item.rsvpId || `${item.sourceTable}-${item.sourceId}`
+                      }
+                      type="button"
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => onEventClick?.(item)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left transition-colors hover:bg-white/10"
                     >
-                      {item.eventType === "club" ? "Club" : "Campus"}
-                    </span>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-outfit font-semibold text-white">
+                            {item.title}
+                          </p>
 
-                    <span
-                      className={`text-[9px] font-inter ${
-                        item.isPast
-                          ? "text-gray-500"
-                          : "text-balance-accent"
-                      }`}
-                    >
-                      {item.isPast ? "Past event" : "RSVP Confirmed"}
-                    </span>
-                  </div>
-                </div>
+                          <p className="mt-1 truncate text-[10px] font-inter text-gray-500">
+                            {item.host || "Campus Event"}
+                          </p>
 
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/5 pt-2">
-                  <span className="text-[9px] font-inter text-gray-400">
-                    📅 {item.date || "Date TBC"}
-                  </span>
+                          <p className="mt-1 truncate text-[10px] font-inter text-gray-400">
+                            📍 {item.location || "Location TBC"}
+                          </p>
+                        </div>
 
-                  <span className="text-[9px] font-inter text-gray-400">
-                    🕐 {item.time || "Time TBC"}
-                  </span>
-                </div>
-              </motion.button>
-            ))}
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[8px] font-inter font-semibold ${
+                              item.eventType === "club"
+                                ? "bg-purple-400/10 text-purple-300"
+                                : "bg-taylor-red/10 text-red-300"
+                            }`}
+                          >
+                            {item.eventType === "club" ? "Club" : "Campus"}
+                          </span>
 
-            {upcomingRSVP.length > 6 && (
-              <p className="pt-1 text-center text-[10px] font-inter text-gray-500">
-                Showing the next 6 of {upcomingRSVP.length} RSVP events
-              </p>
-            )}
+                          <span
+                            className={`text-[9px] font-inter ${
+                              item.isPast
+                                ? "text-gray-500"
+                                : "text-balance-accent"
+                            }`}
+                          >
+                            {item.isPast ? "Past event" : "RSVP Confirmed"}
+                          </span>
+
+                          {item.match_score ? (
+                            <span className="text-[9px] font-inter text-emerald-300">
+                              {String(item.match_score).includes("%")
+                                ? item.match_score
+                                : `${item.match_score}%`}{" "}
+                              match
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/5 pt-2">
+                        <span className="text-[9px] font-inter text-gray-400">
+                          📅 {item.date || "Date TBC"}
+                        </span>
+
+                        <span className="text-[9px] font-inter text-gray-400">
+                          🕐 {item.time || "Time TBC"}
+                        </span>
+                      </div>
+                    </motion.button>
+                  ))}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -745,6 +789,19 @@ export default function SchedulePage({
           );
         })}
       </div>
+
+      {timetableSynced && slots.length === 0 && (
+        <div className="mb-5 rounded-2xl border border-amber-400/20 bg-amber-400/5 px-4 py-4">
+          <p className="text-sm font-outfit font-semibold text-white">
+            No classes loaded for this programme
+          </p>
+          <p className="mt-1 text-[11px] font-inter text-gray-400">
+            Academic Timeline stays empty until your programme has timetable
+            rows. Use the week arrows — campus events still appear under Today
+            Events when that day has any (try Week of Jul 20+).
+          </p>
+        </div>
+      )}
 
       {timetableSynced && (
         <>
@@ -959,7 +1016,7 @@ export default function SchedulePage({
         <div className="mt-3">
           <p className="mt-1 text-[11px] font-inter text-gray-500">
             {!eventsLoading && !eventsError && selectedDayEvents.length === 0
-              ? "No events for this day"
+              ? "No events for this day — try next week (Jul 20+) with the arrows"
               : `${dayName}, ${dayDate.toLocaleDateString("en-MY", {
                   day: "numeric",
                   month: "short",

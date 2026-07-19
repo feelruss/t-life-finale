@@ -18,7 +18,74 @@ const TAG_INTEREST_BASE = {
   Academic: 85,
 };
 
-const MAX_RECOMMENDED = 6;
+const MAX_RECOMMENDED = 5;
+
+const DIVERSITY_TAGS = [
+  "Technology",
+  "Career",
+  "Wellness",
+  "Social",
+  "Creative",
+  "Academic",
+];
+
+/**
+ * Pick up to `limit` events preferring one distinct topic tag each,
+ * so Home feels diverse (e.g. CS student still sees a cooking/wellness pick).
+ */
+function pickDiverseRecommendations(scored, limit, modeKey = "focus") {
+  const picked = [];
+  const usedTags = new Set();
+  const usedIds = new Set();
+
+  // Prefer current mode first so Balance isn't filled with Focus tech events.
+  const ordered = [
+    ...scored.filter(
+      (e) => String(e.category || "").toLowerCase() === modeKey,
+    ),
+    ...scored.filter(
+      (e) => String(e.category || "").toLowerCase() !== modeKey,
+    ),
+  ];
+
+  // First pass: one per preferred topic (highest ranked for that tag)
+  for (const tag of DIVERSITY_TAGS) {
+    if (picked.length >= limit) break;
+    const candidate = ordered.find(
+      (event) =>
+        !usedIds.has(String(event.id)) &&
+        String(event.tag || "") === tag,
+    );
+    if (candidate) {
+      picked.push(candidate);
+      usedTags.add(tag);
+      usedIds.add(String(candidate.id));
+    }
+  }
+
+  // Second pass: any remaining unique tags
+  for (const event of ordered) {
+    if (picked.length >= limit) break;
+    const id = String(event.id);
+    if (usedIds.has(id)) continue;
+    const tag = String(event.tag || "General");
+    if (usedTags.has(tag)) continue;
+    picked.push(event);
+    usedTags.add(tag);
+    usedIds.add(id);
+  }
+
+  // Fill remaining slots by rank (mode-first order)
+  for (const event of ordered) {
+    if (picked.length >= limit) break;
+    const id = String(event.id);
+    if (usedIds.has(id)) continue;
+    picked.push(event);
+    usedIds.add(id);
+  }
+
+  return picked;
+}
 
 function clamp(n, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(Number(n) || 0)));
@@ -194,8 +261,14 @@ export function recommendEvents({
 
   scored.sort((a, b) => b.recommendationScore - a.recommendationScore);
 
+  const recommended = pickDiverseRecommendations(
+    scored,
+    Math.max(1, limit),
+    modeKey,
+  );
+
   return {
-    recommended: scored.slice(0, Math.max(1, limit)),
+    recommended,
     totalAvailable: candidates.length,
   };
 }
