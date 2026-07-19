@@ -7,10 +7,118 @@ import {
   getStudentSchedule,
   groupScheduleByDay,
 } from "../services/scheduleService";
-import { getUpcomingRSVPEvents } from "../services/rsvpService";
+import {
+  getUpcomingRSVPEvents,
+  normalizeRSVPEventId,
+} from "../services/rsvpService";
 import { getScheduleEvents } from "../services/eventScheduleService";
-import { getEventPreferences } from "../data/db";
+import { getEventPreferences, getUserRSVPEvents } from "../data/db";
 import { computePersonalizedMatch } from "../services/eventRecommendationService";
+
+function buildLocalRSVPCards(localRows, scheduleEvents = []) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  return (localRows || []).map((row) => {
+    const eventId = normalizeRSVPEventId(row.eventId);
+    const fromSchedule = (scheduleEvents || []).find((event) => {
+      const candidate = normalizeRSVPEventId(
+        event.sourceId || event.eventId || event.id,
+      );
+      return candidate && candidate === eventId;
+    });
+
+    if (fromSchedule) {
+      const date = String(fromSchedule.date || "").slice(0, 10);
+      return {
+        ...fromSchedule,
+        id: eventId,
+        eventId,
+        sourceId: eventId,
+        sourceTable: fromSchedule.sourceTable || "campus_events",
+        eventType: fromSchedule.eventType || "campus",
+        rsvpId: row.id,
+        isRSVPd: true,
+        isPast: Boolean(date && date < todayISO),
+        isUndated: !date,
+      };
+    }
+
+    const date = String(row.date || "").slice(0, 10);
+    return {
+      id: eventId,
+      eventId,
+      sourceId: eventId,
+      sourceTable: row.sourceTable || "campus_events",
+      eventType: row.eventType || "campus",
+      rsvpId: row.id,
+      isRSVPd: true,
+      title: row.title || "Registered event",
+      host: row.host || "Campus Event",
+      date,
+      time: row.time || "",
+      location: row.location || "Location TBC",
+      category: row.category || "balance",
+      match_score: row.match_score || null,
+      capacity: Number(row.capacity || 0),
+      registered: Number(row.registered || 0),
+      description: row.description || "",
+      tag: row.tag || "Campus",
+      isPast: Boolean(date && date < todayISO),
+      isUndated: !date,
+    };
+  });
+}
+
+function mergeRSVPLists(cloudRows, localRows, scheduleEvents) {
+  const merged = new Map();
+
+  for (const item of cloudRows || []) {
+    const key = normalizeRSVPEventId(item.sourceId || item.eventId || item.id);
+    if (key) merged.set(key, item);
+  }
+
+  for (const item of buildLocalRSVPCards(localRows, scheduleEvents)) {
+    const key = normalizeRSVPEventId(item.sourceId || item.eventId || item.id);
+    if (!key) continue;
+
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, item);
+      continue;
+    }
+
+    // Prefer a real title/details over a cloud stub when the join missed.
+    if (
+      !existing.title ||
+      existing.title === "Registered event" ||
+      (!existing.date && item.date)
+    ) {
+      merged.set(key, {
+        ...item,
+        ...existing,
+        title:
+          existing.title && existing.title !== "Registered event"
+            ? existing.title
+            : item.title,
+        host: existing.host || item.host,
+        date: existing.date || item.date,
+        time: existing.time || item.time,
+        location: existing.location || item.location,
+        match_score: existing.match_score || item.match_score,
+        eventType: existing.eventType || item.eventType,
+        sourceTable: existing.sourceTable || item.sourceTable,
+        isRSVPd: true,
+      });
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => {
+    const aPast = a.isPast ? 1 : 0;
+    const bPast = b.isPast ? 1 : 0;
+    if (aPast !== bPast) return aPast - bPast;
+    return String(a.date || "").localeCompare(String(b.date || ""));
+  });
+}
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -358,11 +466,36 @@ export default function SchedulePage({
       setUpcomingRSVPError("");
 
       try {
-        const rows = await getUpcomingRSVPEvents(userId);
+        let cloudRows = [];
+        try {
+          cloudRows = await getUpcomingRSVPEvents(userId);
+        } catch (cloudError) {
+          console.warn(
+            "Cloud RSVP list unavailable, using local RSVPs:",
+            cloudError?.message || cloudError,
+          );
+        }
 
         if (cancelled) return;
 
-        setUpcomingRSVP(rows);
+        const localRows = getUserRSVPEvents(userKey || "guest");
+        const prefs = getEventPreferences(userKey || "guest");
+        const merged = mergeRSVPLists(cloudRows, localRows, scheduleEvents).map(
+          (item) => {
+            const personal = computePersonalizedMatch(
+              item,
+              prefs,
+              scheduleEvents,
+            );
+            return {
+              ...item,
+              match_score: personal.match_score || item.match_score,
+              match_breakdown: personal.match_breakdown || item.match_breakdown,
+            };
+          },
+        );
+
+        setUpcomingRSVP(merged);
       } catch (error) {
         if (cancelled) return;
 
@@ -410,7 +543,7 @@ export default function SchedulePage({
 
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [userId]);
+  }, [userId, userKey, scheduleEvents]);
 
   const weekConfig = weekConfigs[selectedWeek];
   const activeSchedule = databaseSchedule;

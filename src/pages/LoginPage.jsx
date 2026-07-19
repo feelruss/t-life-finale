@@ -125,14 +125,18 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
         programme: regProgramme,
       });
 
-      if (result.session) {
-        const user = {
-          ...result.user,
-          full_name: regName.trim(),
-          role: "student",
-          programme: regProgramme,
-        };
-        onLogin({ type: "student", user });
+      // Session users are returned as the profile itself (no nested .session).
+      // Always enter Home with the programme chosen on this form.
+      if (result?.id && !result.requiresEmailConfirmation) {
+        onLogin({
+          type: "student",
+          user: {
+            ...result,
+            full_name: regName.trim() || result.full_name,
+            role: "student",
+            programme: regProgramme || result.programme || "",
+          },
+        });
         return;
       }
 
