@@ -346,6 +346,7 @@ export default function AdminDashboard({
   const [localAdminUsers] = useState(getAdmins());
   const [supabaseAdminUsers, setSupabaseAdminUsers] = useState([]);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
   const [newUser, setNewUser] = useState({
     name: "",
     email: "",
@@ -1278,6 +1279,10 @@ export default function AdminDashboard({
   // Creates an Auth user through the server-side Admin API.
   // The currently logged-in administrator remains signed in.
   const handleCreateUser = async () => {
+    if (isCreatingAdmin) {
+      return;
+    }
+
     const fullName = newUser.name.trim();
     const email = newUser.email.trim().toLowerCase();
     const password = newUser.password.trim();
@@ -1303,8 +1308,18 @@ export default function AdminDashboard({
       return;
     }
 
+    if (!loggedInAdmin.id) {
+      alert(
+        "Your authenticated administrator ID could not be loaded. Please sign in again.",
+      );
+      return;
+    }
+
+    setIsCreatingAdmin(true);
+
     try {
       // This calls /api/create-admin. It does not call supabase.auth.signUp() in the browser.
+      // Create the Auth account and public.users profile through the server-side /api/create-admin endpoint.
       const createdAdmin = await createAdminAccount({
         fullName,
         email,
@@ -1313,11 +1328,48 @@ export default function AdminDashboard({
         faculty,
       });
 
-      // Reload the Access table after the server creates both auth.users and public.users records.
-      await fetchSupabaseAdminUsers();
+      // Save the account creation inside activity_logs so it appears in the Recent Activity section.
+      const { error: activityError } = await supabase
+        .from("activity_logs")
+        .insert({
+          entity_type: "admin",
+
+          admin_id: createdAdmin?.id || createdAdmin?.user?.id || null,
+
+          admin_email:
+            createdAdmin?.email || createdAdmin?.user?.email || email,
+
+          event_id: null,
+
+          // Your existing Recent Activity formatter uses event_title as the display name for admin activities.
+          event_title:
+            createdAdmin?.full_name ||
+            createdAdmin?.fullName ||
+            createdAdmin?.user?.user_metadata?.full_name ||
+            fullName,
+
+          event_host: null,
+          action: "create",
+
+          performed_by_id: loggedInAdmin.id,
+          performed_by_name: loggedInAdmin.name,
+          performed_by_role: loggedInAdmin.dbRole,
+        });
+
+      if (activityError) {
+        console.error(
+          "Admin account was created, but the activity log could not be saved:",
+          activityError,
+        );
+      }
+
+      // Refresh both sections after the account has been created.
+      await Promise.all([fetchSupabaseAdminUsers(), fetchRecentActivity()]);
 
       alert(
-        `${newUser.role} account created successfully for ${createdAdmin.email}.`,
+        `${newUser.role} account created successfully for ${
+          createdAdmin?.email || createdAdmin?.user?.email || email
+        }.`,
       );
 
       setShowCreateUserModal(false);
@@ -1333,6 +1385,8 @@ export default function AdminDashboard({
       console.error("Failed to create admin account:", error);
 
       alert(error.message || "Failed to create admin account.");
+    } finally {
+      setIsCreatingAdmin(false);
     }
   };
 
@@ -2686,8 +2740,14 @@ export default function AdminDashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowCreateUserModal(false)}
-              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[300]"
+              onClick={() => {
+                if (!isCreatingAdmin) {
+                  setShowCreateUserModal(false);
+                }
+              }}
+              className={`fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm ${
+                isCreatingAdmin ? "cursor-wait" : ""
+              }`}
             />
             <motion.div
               initial={{ opacity: 0, y: "100%" }}
@@ -2706,8 +2766,14 @@ export default function AdminDashboard({
                   Create Admin Account
                 </h3>
                 <button
+                  type="button"
+                  disabled={isCreatingAdmin}
                   onClick={() => setShowCreateUserModal(false)}
-                  className="p-1.5 rounded-lg glass"
+                  className="
+    rounded-lg p-1.5 glass
+    disabled:cursor-not-allowed
+    disabled:opacity-40
+  "
                 >
                   <X size={16} className="text-gray-400" />
                 </button>
@@ -2839,10 +2905,36 @@ export default function AdminDashboard({
                 </div>
 
                 <button
+                  type="button"
                   onClick={handleCreateUser}
-                  className="w-full mt-6 bg-taylor-red hover:bg-taylor-red-light text-white font-bold py-3.5 rounded-xl transition-colors shadow-glow-red"
+                  disabled={isCreatingAdmin}
+                  className="
+    mt-6 flex w-full items-center justify-center gap-2
+    rounded-xl bg-taylor-red py-3.5
+    font-bold text-white
+    shadow-glow-red transition-colors
+    hover:bg-taylor-red-light
+    disabled:cursor-not-allowed
+    disabled:opacity-60
+  "
                 >
-                  Create Account
+                  {isCreatingAdmin ? (
+                    <>
+                      <span
+                        className="
+          h-4 w-4
+          animate-spin
+          rounded-full
+          border-2 border-white/30
+          border-t-white
+        "
+                      />
+
+                      <span>Creating Account...</span>
+                    </>
+                  ) : (
+                    "Create Account"
+                  )}
                 </button>
               </div>
             </motion.div>
