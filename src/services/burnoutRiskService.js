@@ -124,27 +124,21 @@ const loadRowsForEventIds = async ({ table, select, eventIds }) => {
 };
 
 /**
- * Recalculates and stores burnout scores for one week.
+ * Recalculates burnout scores for one week without writing to Supabase.
  *
  * Only students found in attendance and/or event_rsvps for Focus/Balance
- * events in the selected week are included. Existing scores for students who
- * no longer have qualifying activity in that week are removed.
+ * events in the selected week are included. The returned rows match the
+ * burnout_risk_scores shape so the dashboard can preview them in memory.
  *
  * @param {string|null} selectedWeekStart Monday in YYYY-MM-DD format.
+ * @returns {Promise<Array>} Temporary calculated score rows.
  */
-export const calculateAndSaveBurnoutScores = async (
-  selectedWeekStart = null,
-) => {
-  const {
-    weekStart,
-    weekEnd,
-    weekStartTimestamp,
-    weekEndTimestamp,
-  } = getWeekRange(selectedWeekStart);
+export const calculateBurnoutScores = async (selectedWeekStart = null) => {
+  const { weekStart, weekEnd } = getWeekRange(selectedWeekStart);
 
-  // Fetch weekly events first. Filtering activity by event IDs is reliable and
-  // ensures an old RSVP is counted according to the event's week, not the date
-  // on which the RSVP was created.
+  // Fetch the selected week's qualifying events first. Activity is then
+  // filtered by event ID, so an RSVP is assigned to the event's week rather
+  // than the date on which the RSVP was created.
   const { data: weeklyEvents, error: eventsError } = await supabase
     .from("campus_events")
     .select("id, category, event_date")
@@ -164,21 +158,7 @@ export const calculateAndSaveBurnoutScores = async (
   );
   const eventIds = Array.from(eventCategoryMap.keys());
 
-  if (eventIds.length === 0) {
-    // Keep the selected week accurate if its qualifying events were removed.
-    const { error: deleteError } = await supabase
-      .from("burnout_risk_scores")
-      .delete()
-      .eq("week_start", weekStart);
-
-    if (deleteError) {
-      throw new Error(
-        `Unable to clear empty weekly scores: ${deleteError.message}`,
-      );
-    }
-
-    return [];
-  }
+  if (eventIds.length === 0) return [];
 
   const [attendanceRows, rsvpRows] = await Promise.all([
     loadRowsForEventIds({
@@ -226,7 +206,9 @@ export const calculateAndSaveBurnoutScores = async (
     addActivity(row.student_id, row.event_id, "attendance"),
   );
 
-  const scoreRows = Array.from(studentActivityMap.values()).map((activity) => {
+  const calculatedAt = new Date().toISOString();
+
+  return Array.from(studentActivityMap.values()).map((activity) => {
     const focusEvents = activity.focusEventIds.size;
     const balanceEvents = activity.balanceEventIds.size;
     const result = calculateStudentRiskScore({ focusEvents, balanceEvents });
@@ -247,57 +229,14 @@ export const calculateAndSaveBurnoutScores = async (
         weekStart,
         weekEndExclusive: weekEnd,
         calculatedFrom: ["event_rsvps", "attendance"],
+        previewOnly: true,
       },
-      updated_at: new Date().toISOString(),
+      updated_at: calculatedAt,
     };
   });
-
-  // Remove stale rows for this week before upserting the freshly derived set.
-  // This guarantees that only users currently present in RSVP/attendance remain.
-  const activeStudentIds = scoreRows.map((row) => row.student_id);
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from("burnout_risk_scores")
-    .select("student_id")
-    .eq("week_start", weekStart);
-
-  if (existingError) {
-    throw new Error(
-      `Unable to inspect existing weekly scores: ${existingError.message}`,
-    );
-  }
-
-  const activeStudentIdSet = new Set(activeStudentIds);
-  const staleStudentIds = (existingRows || [])
-    .map((row) => String(row.student_id || ""))
-    .filter((studentId) => studentId && !activeStudentIdSet.has(studentId));
-
-  for (const staleChunk of chunkArray(staleStudentIds)) {
-    const { error: staleDeleteError } = await supabase
-      .from("burnout_risk_scores")
-      .delete()
-      .eq("week_start", weekStart)
-      .in("student_id", staleChunk);
-
-    if (staleDeleteError) {
-      throw new Error(
-        `Unable to remove stale weekly scores: ${staleDeleteError.message}`,
-      );
-    }
-  }
-
-  if (scoreRows.length === 0) return [];
-
-  const { data, error } = await supabase
-    .from("burnout_risk_scores")
-    .upsert(scoreRows, {
-      onConflict: "student_id,week_start",
-    })
-    .select();
-
-  if (error) {
-    throw new Error(`Unable to save burnout scores: ${error.message}`);
-  }
-
-  return data || [];
 };
+
+// Backward-compatible name used by the existing dashboard. Despite the old
+// name, this function now calculates only and does not insert, update, or
+// delete any burnout_risk_scores rows.
+export const calculateAndSaveBurnoutScores = calculateBurnoutScores;

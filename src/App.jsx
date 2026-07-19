@@ -899,14 +899,6 @@ export default function App() {
       });
       setAiMeter(nextMeter);
       if (currentUserKey && currentUserKey !== "guest") {
-        const attendanceEventId = String(
-          event.sourceEventId || event.sourceId || event.eventId || event.id || "",
-        ).trim();
-        recordEventAttendance({
-          studentId: currentUserKey,
-          eventId: attendanceEventId,
-        }).catch(() => {});
-
         saveAIMeterHistory({
           userId: currentUserKey,
           mode: event.category || mode,
@@ -1188,26 +1180,16 @@ export default function App() {
           entityId: canonicalId,
           metadata: { eventTitle: event.title },
         });
-        // Notifications only for upcoming / undated RSVPs (not past events).
-        const eventDay = String(event.date || event.event_date || "").slice(
-          0,
-          10,
-        );
-        const today = new Date().toISOString().slice(0, 10);
-        const isFutureOrUndated = !eventDay || eventDay >= today;
-        if (isFutureOrUndated) {
-          addNotification({
-            userKey: currentUserKey,
-            type: "event-rsvp",
-            title: "RSVP confirmed",
-            body: `You joined ${event.title}${eventDay ? ` · ${eventDay}` : ""}.`,
-            priority: "medium",
-            icon: "🎟️",
-            accentColor: "#60A5FA",
-            eventId: canonicalId,
-            eventDate: eventDay || null,
-          });
-        }
+        addNotification({
+          userKey: currentUserKey,
+          type: "event-rsvp",
+          title: "RSVP confirmed",
+          body: `You joined ${event.title}. AI Status Meter updated.`,
+          priority: "medium",
+          icon: "🎟️",
+          accentColor: "#60A5FA",
+          eventId: canonicalId,
+        });
         showToast(
           `Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%`,
           `Joined ${event.title}`,
@@ -1228,6 +1210,16 @@ export default function App() {
           entityType: "event",
           entityId: canonicalId,
           metadata: { eventTitle: event.title },
+        });
+        addNotification({
+          userKey: currentUserKey,
+          type: "event-rsvp-removed",
+          title: "RSVP removed",
+          body: `${event.title} removed. Scores adjusted.`,
+          priority: "low",
+          icon: "🗑️",
+          accentColor: "#9CA3AF",
+          eventId: canonicalId,
         });
         showToast(
           `Focus ${nextMeter.focusScore}% · Wellness ${nextMeter.balanceScore}%`,

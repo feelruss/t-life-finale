@@ -425,7 +425,7 @@ export const getNotifications = (userKey = 'guest') => {
     return Array.isArray(records) ? records : [];
 };
 
-export const addNotification = ({ userKey = 'guest', type = 'general', title, body, priority = 'low', icon = '🔔', accentColor = '#FF3B5C', eventId = null, eventDate = null }) => {
+export const addNotification = ({ userKey = 'guest', type = 'general', title, body, priority = 'low', icon = '🔔', accentColor = '#FF3B5C', eventId = null }) => {
     const current = getNotifications(userKey);
     const next = [
         {
@@ -437,7 +437,6 @@ export const addNotification = ({ userKey = 'guest', type = 'general', title, bo
             icon,
             accentColor,
             eventId,
-            eventDate,
             isRead: false,
             timestamp: new Date().toISOString(),
         },

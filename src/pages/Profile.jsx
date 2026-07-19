@@ -359,12 +359,6 @@ export default function Profile({
         </div>
       </div>
 
-      <p className="mb-3 text-[10px] font-inter leading-relaxed text-gray-500">
-        Events Attended and Focus Hours count only when you{" "}
-        <span className="text-gray-300">check in on the event day</span> (not
-        from RSVP alone). RSVP saves your seat; check-in records that you went.
-      </p>
-
       {/* Stats Grid */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         {/* Events Attended */}

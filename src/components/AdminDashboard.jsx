@@ -27,7 +27,10 @@ import { getAdmins, createAdmin } from "../data/db";
 import { buildBaselineMatchScores } from "../services/eventRecommendationService";
 import { createAdminAccount, getAdminUsers } from "../services/adminService";
 import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
-import { calculateAndSaveBurnoutScores } from "../services/burnoutRiskService";
+import {
+  calculateBurnoutScores,
+  getMondayDate,
+} from "../services/burnoutRiskService";
 
 const EVENT_TAGS = [
   "Technology",
@@ -614,15 +617,20 @@ export default function AdminDashboard({
 
   const refreshBurnoutRiskScores = async () => {
     try {
-      await calculateAndSaveBurnoutScores();
-      await loadBurnoutAnalytics();
+      const previewWeekStart = getMondayDate();
+      const previewScores = await calculateBurnoutScores(previewWeekStart);
+
+      await loadBurnoutAnalytics(previewScores, previewWeekStart);
     } catch (error) {
       console.error("Failed to calculate burnout scores:", error);
     }
   };
 
   // New: Load burnout analytics and Faculty Risk Breakdown from Supabase
-  const loadBurnoutAnalytics = async () => {
+  const loadBurnoutAnalytics = async (
+    previewScores = null,
+    requestedPreviewWeekStart = null,
+  ) => {
     if (!hasSupabaseConfig) {
       setBurnoutAnalytics({
         ...analytics.burnoutTelemetry,
@@ -698,9 +706,29 @@ export default function AdminDashboard({
         );
       }
 
-      const allScores = (scores || []).filter((score) =>
+      const savedScores = (scores || []).filter((score) =>
         studentMap.has(String(score.student_id)),
       );
+
+      // A recalculation is preview-only. Replace the matching week's saved
+      // rows in memory without inserting, updating, or deleting Supabase data.
+      const validPreviewScores = Array.isArray(previewScores)
+        ? previewScores.filter((score) =>
+            studentMap.has(String(score.student_id)),
+          )
+        : [];
+
+      const previewWeekStart =
+        requestedPreviewWeekStart || validPreviewScores[0]?.week_start || null;
+
+      const allScores = previewWeekStart
+        ? [
+            ...savedScores.filter(
+              (score) => score.week_start !== previewWeekStart,
+            ),
+            ...validPreviewScores,
+          ]
+        : savedScores;
 
       // Find the newest available week in burnout_risk_scores.
       const latestWeekStart = allScores.reduce((latest, item) => {
@@ -1970,6 +1998,7 @@ export default function AdminDashboard({
                 <button
                   type="button"
                   onClick={refreshBurnoutRiskScores}
+                  title="Recalculate a temporary preview without saving to Supabase"
                   className="rounded-lg bg-yellow-500/10 px-3 py-2 text-[10px] font-inter font-semibold text-yellow-400 transition-colors hover:bg-yellow-500/20"
                 >
                   Recalculate Scores

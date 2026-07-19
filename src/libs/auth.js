@@ -183,38 +183,6 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
   const metadata = authUser.user_metadata || {};
   const role = normalizeRole(profile.role);
 
-  const programmeFromProfile = String(profile?.programme || "").trim();
-  const programmeFromMeta = String(metadata.programme || "").trim();
-  const programme = programmeFromProfile || programmeFromMeta;
-  const faculty =
-    profile?.faculty ||
-    metadata.faculty ||
-    (programme ? getFacultyFromProgramme(programme) : "") ||
-    "";
-
-  // Signup stores programme in auth metadata; sync once into public.users
-  // so students are not asked again on Complete Profile.
-  if (
-    profile?.id &&
-    !programmeFromProfile &&
-    programmeFromMeta &&
-    role === "student"
-  ) {
-    void supabase
-      .from("users")
-      .update({
-        programme: programmeFromMeta,
-        faculty: faculty || getFacultyFromProgramme(programmeFromMeta),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", authUser.id)
-      .then(({ error }) => {
-        if (error) {
-          console.warn("Programme sync skipped:", error.message);
-        }
-      });
-  }
-
   return {
     ...authUser,
     ...profile,
@@ -350,27 +318,7 @@ export async function signUpUser({
   /*
    * public.users is automatically created by
    * the on_auth_user_created database trigger.
-   * Write programme immediately when we have a session
-   * so Complete Profile is not shown again.
    */
-  const resolvedFaculty =
-    faculty || (programme ? getFacultyFromProgramme(programme) : "");
-
-  if (data.session && programme && normalizedRole === "student") {
-    const { error: profileError } = await supabase
-      .from("users")
-      .update({
-        programme,
-        faculty: resolvedFaculty || null,
-        full_name: normalizedName,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", data.user.id);
-
-    if (profileError) {
-      console.warn("Signup programme write:", profileError.message);
-    }
-  }
 
   if (data.session) {
     return getCurrentSupabaseUser(data.user);
@@ -381,7 +329,7 @@ export async function signUpUser({
     full_name: normalizedName,
     email: normalizedEmail,
     role: normalizedRole,
-    faculty: resolvedFaculty,
+    faculty,
     programme,
     requiresEmailConfirmation: true,
   };

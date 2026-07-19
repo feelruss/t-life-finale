@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   CodeBracketIcon,
   ShieldCheckIcon,
@@ -53,19 +53,7 @@ export default function EventFeed({
       setLoading(true);
       setLoadError("");
       try {
-        // Prefer mode category, but never leave Balance/Focus empty if the
-        // other pool still has upcoming campus events.
-        let result = await fetchCampusEvents({ category });
-        if ((result.events || []).length === 0) {
-          result = await fetchCampusEvents({ category: undefined });
-          const modeEvents = (result.events || []).filter(
-            (event) =>
-              String(event.category || "").toLowerCase() === category,
-          );
-          if (modeEvents.length > 0) {
-            result = { ...result, events: modeEvents };
-          }
-        }
+        const result = await fetchCampusEvents({ category });
         if (cancelled) return;
         setEvents(result.events || []);
         setSource(result.source || "supabase");
@@ -208,12 +196,21 @@ export default function EventFeed({
 
       {!loading && visibleEvents.length > 0 && (
         <p className="mb-3 text-[10px] font-inter text-gray-400">
-          Showing 5 diverse campus picks. Tap Interested / Not interested — the
-          overall match % and order update from your preferences.
+          Recommendation engine: tap Interested to boost similar topics, or Not
+          interested to hide them. Match % = 40% Interest + 30% Schedule + 20%
+          Proximity + 10% Social.
         </p>
       )}
 
-      <div key={mode} className="flex flex-col gap-3 pb-6">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={mode}
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -15 }}
+          transition={{ duration: 0.35, ease: "easeInOut" }}
+          className="flex flex-col gap-3"
+        >
           {loading ? (
             <div className="rounded-2xl glass p-6 text-center text-gray-400">
               <p className="text-sm text-white">Loading campus events...</p>
@@ -222,22 +219,30 @@ export default function EventFeed({
             visibleEvents.map((event, index) => {
               const IconComponent = iconMap[event.icon];
               const math = matchMath(event);
-              const cardKey = String(
-                event.id || event.sourceId || `${event.title}-${index}`,
-              );
 
               return (
                 <motion.div
-                  key={cardKey}
+                  key={event.id}
                   drag="x"
                   dragConstraints={{ left: 0, right: 0 }}
                   dragElastic={0.4}
-                  initial={{ opacity: 1, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, delay: index * 0.04 }}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{
+                    opacity: 1,
+                    y: [0, index % 2 === 0 ? -4 : -7, 0],
+                  }}
+                  transition={{
+                    opacity: { duration: 0.4, delay: index * 0.08 },
+                    y: {
+                      duration: 3.2 + (index % 3) * 0.4,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      delay: index * 0.12,
+                    },
+                  }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => onEventClick?.(event)}
-                  className="group relative overflow-hidden rounded-2xl border border-white/15 bg-[#12121a]/95 cursor-grab active:cursor-grabbing transition-all duration-300 hover:border-white/25"
+                  className="group relative rounded-2xl glass overflow-hidden cursor-grab active:cursor-grabbing transition-all duration-300 hover:border-white/10"
                 >
                   <div
                     className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl"
@@ -252,11 +257,9 @@ export default function EventFeed({
                         <span className="text-[10px] font-inter font-bold px-2 py-0.5 rounded border bg-white/5 text-gray-400 border-white/10">
                           Tap for RSVP
                         </span>
-                        {event.tag ? (
-                          <span className="text-[10px] font-inter font-bold px-2 py-0.5 rounded border border-white/10 bg-white/5 text-gray-300">
-                            {event.tag}
-                          </span>
-                        ) : null}
+                        <span className="text-[10px] font-inter font-bold bg-gray-700/50 text-green-400 px-2 py-0.5 rounded border border-green-500/20">
+                          {math.score}% Match
+                        </span>
                       </div>
                       {IconComponent ? (
                         <IconComponent className="w-5 h-5 text-gray-400" />
@@ -266,7 +269,9 @@ export default function EventFeed({
                     </div>
 
                     <div className="mb-2">
-                      <h3 className="mb-0.5 text-[15px] font-outfit font-semibold leading-tight text-white transition-colors group-hover:text-white">
+                      <h3
+                        className={`text-[15px] font-outfit font-semibold leading-tight mb-0.5 transition-colors ${isFocus ? "text-red-50 group-hover:text-white" : "text-teal-50 group-hover:text-white"}`}
+                      >
                         {event.title}
                       </h3>
                       <p
@@ -277,15 +282,21 @@ export default function EventFeed({
                         }
                       >
                         by{" "}
-                        <span className="text-white/90">{event.host}</span>
-                      </p>
-                      <p className="mt-1 text-[10px] font-inter text-gray-400">
-                        📅 {event.date || "Date TBC"}
-                        {event.time ? ` · ${event.time}` : ""}
+                        <span
+                          className={isFocus ? "text-red-50" : "text-teal-50"}
+                        >
+                          {event.host}
+                        </span>
                       </p>
                     </div>
 
-                    <p className="mb-3 line-clamp-2 text-xs font-inter leading-relaxed text-gray-200">
+                    <p
+                      className={
+                        isFocus
+                          ? "text-xs font-inter text-red-100 leading-relaxed mb-3 line-clamp-2"
+                          : "text-xs font-inter text-teal-100 leading-relaxed mb-3 line-clamp-2"
+                      }
+                    >
                       {event.description}
                     </p>
 
@@ -306,16 +317,24 @@ export default function EventFeed({
                       </div>
                     )}
 
-                    <div className="mb-3 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3 py-3">
-                      <p className="text-[10px] font-inter uppercase tracking-wider text-emerald-200/80">
-                        Overall match score
+                    <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+                      <p className="text-[10px] font-inter text-gray-400">
+                        Match breakdown (personalised from your taps)
                       </p>
-                      <p className="mt-0.5 text-2xl font-outfit font-bold text-emerald-300">
-                        {math.score}%
-                      </p>
-                      <p className="mt-0.5 text-[10px] font-inter text-gray-400">
-                        Updates when you tap Interested or Not interested
-                      </p>
+                      <div className="mt-1.5 flex flex-wrap gap-2">
+                        <span className="text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-0.5">
+                          Interest {math.interest}%
+                        </span>
+                        <span className="text-[10px] text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded px-2 py-0.5">
+                          Schedule {math.schedule}%
+                        </span>
+                        <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5">
+                          Proximity {math.proximity}%
+                        </span>
+                        <span className="text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 rounded px-2 py-0.5">
+                          Social {math.social}%
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-stretch justify-end border-t border-white/5 pt-3 mt-1 gap-2">
@@ -362,28 +381,12 @@ export default function EventFeed({
               </p>
               <p className="text-xs">
                 {loadError ||
-                  (hiddenEvents.length > 0
-                    ? "You hid these suggestions. Tap Undo after Not interested, or switch mode / clear preferences."
-                    : "Try switching Focus/Balance, or open Admin → Events to publish upcoming campus events.")}
+                  "Try switching to the other mode or check Admin campus events."}
               </p>
-              {hiddenEvents.length > 0 ? (
-                <button
-                  type="button"
-                  className="mt-3 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white"
-                  onClick={async () => {
-                    let prefs = getEventPreferences(userKey);
-                    for (const id of [...(prefs.hidden || [])]) {
-                      prefs = await saveEventHidden(userKey, id, false);
-                    }
-                    setPreferences(prefs);
-                  }}
-                >
-                  Restore hidden suggestions
-                </button>
-              ) : null}
             </div>
           )}
-      </div>
+        </motion.div>
+      </AnimatePresence>
 
       {lastHidden && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
