@@ -27,6 +27,7 @@ import { getAdmins, createAdmin } from "../data/db";
 import { buildBaselineMatchScores } from "../services/eventRecommendationService";
 import { createAdminAccount, getAdminUsers } from "../services/adminService";
 import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
+import { calculateAndSaveBurnoutScores } from "../services/burnoutRiskService";
 
 const EVENT_TAGS = [
   "Technology",
@@ -177,7 +178,7 @@ const sortNewestFirst = (list) =>
       new Date(a.updatedAt || a.createdAt || 0),
   );
 
-// Simple bar chart component — numbers = count of students engaged that day
+// Simple bar chart component
 function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
   const maxVal = Math.max(
     0,
@@ -187,10 +188,11 @@ function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
   );
 
   return (
+    // New: Added gap between Y-axis and bars, and adjusted height to account for X-axis labels
     <div className="flex gap-2" style={{ height }}>
       <div
         className="flex flex-col justify-between items-end pr-1 text-[8px] font-inter text-gray-500"
-        style={{ height: height - 20, minWidth: 28 }}
+        style={{ height: height - 20, minWidth: 24 }}
       >
         {[
           maxVal,
@@ -204,46 +206,35 @@ function MiniBarChart({ data, dataKeyA, dataKeyB, labelKey, height = 120 }) {
       </div>
 
       <div className="flex-1 flex items-end justify-between gap-1">
-        {data.map((d, i) => {
-          const focusCount = Number(d[dataKeyA] || 0);
-          const balanceCount = Number(d[dataKeyB] || 0);
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-              <div className="flex items-center gap-0.5 text-[7px] font-inter text-gray-400 leading-none h-3">
-                <span className="text-taylor-red">{focusCount}</span>
-                <span className="text-gray-600">/</span>
-                <span className="text-teal-400">{balanceCount}</span>
-              </div>
-              <div
-                className="flex items-end gap-px w-full justify-center"
-                style={{ height: height - 32 }}
-              >
-                <motion.div
-                  title={`Focus: ${focusCount} students`}
-                  className="flex-1 max-w-[12px] rounded-t bg-taylor-red/80"
-                  initial={{ height: 0 }}
-                  animate={{
-                    height: `${maxVal ? (focusCount / maxVal) * 100 : 0}%`,
-                  }}
-                  transition={{ duration: 0.5, delay: i * 0.05 }}
-                />
-                <motion.div
-                  title={`Balance: ${balanceCount} students`}
-                  className="flex-1 max-w-[12px] rounded-t bg-balance-accent/80"
-                  initial={{ height: 0 }}
-                  animate={{
-                    height: `${maxVal ? (balanceCount / maxVal) * 100 : 0}%`,
-                  }}
-                  transition={{ duration: 0.5, delay: i * 0.05 + 0.1 }}
-                />
-              </div>
-
-              <span className="text-[8px] font-inter text-gray-500">
-                {d[labelKey]}
-              </span>
+        {data.map((d, i) => (
+          <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+            <div
+              className="flex items-end gap-px w-full justify-center"
+              style={{ height: height - 20 }}
+            >
+              <motion.div
+                className="flex-1 max-w-[12px] rounded-t bg-taylor-red/80"
+                initial={{ height: 0 }}
+                animate={{
+                  height: `${maxVal ? (d[dataKeyA] / maxVal) * 100 : 0}%`,
+                }}
+                transition={{ duration: 0.5, delay: i * 0.05 }}
+              />
+              <motion.div
+                className="flex-1 max-w-[12px] rounded-t bg-balance-accent/80"
+                initial={{ height: 0 }}
+                animate={{
+                  height: `${maxVal ? (d[dataKeyB] / maxVal) * 100 : 0}%`,
+                }}
+                transition={{ duration: 0.5, delay: i * 0.05 + 0.1 }}
+              />
             </div>
-          );
-        })}
+
+            <span className="text-[8px] font-inter text-gray-500">
+              {d[labelKey]}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -621,6 +612,15 @@ export default function AdminDashboard({
     setActiveToday(MOCK_ACTIVE_TODAY + (count ?? 0));
   };
 
+  const refreshBurnoutRiskScores = async () => {
+    try {
+      await calculateAndSaveBurnoutScores();
+      await loadBurnoutAnalytics();
+    } catch (error) {
+      console.error("Failed to calculate burnout scores:", error);
+    }
+  };
+
   // New: Load burnout analytics and Faculty Risk Breakdown from Supabase
   const loadBurnoutAnalytics = async () => {
     if (!hasSupabaseConfig) {
@@ -637,10 +637,7 @@ export default function AdminDashboard({
     }
 
     try {
-      // =====================================================
       // 1. Load every student from public.users
-      // =====================================================
-
       const { data: studentRows, error: studentsError } = await supabase
         .from("users")
         .select("id, faculty, focus_mode")
@@ -652,10 +649,7 @@ export default function AdminDashboard({
 
       const students = studentRows || [];
 
-      // =====================================================
       // 2. Calculate Focus : Balance ratio
-      // =====================================================
-
       const focusCount = students.filter(
         (student) =>
           String(student.focus_mode || "")
@@ -677,38 +671,22 @@ export default function AdminDashboard({
             ? `${focusCount}.0`
             : "0.0";
 
-      // =====================================================
       // 3. Create student and faculty lookup maps
-      // =====================================================
+      const studentMap = new Map(
+        students.map((student) => {
+          const faculty = String(student.faculty || "").trim() || "Unassigned";
 
-      const studentMap = new Map();
+          return [
+            String(student.id),
+            {
+              ...student,
+              faculty,
+            },
+          ];
+        }),
+      );
 
-      const facultyMap = new Map();
-
-      students.forEach((student) => {
-        const faculty = String(student.faculty || "").trim() || "Unassigned";
-
-        studentMap.set(String(student.id), {
-          ...student,
-          faculty,
-        });
-
-        if (!facultyMap.has(faculty)) {
-          facultyMap.set(faculty, {
-            faculty,
-            students: 0,
-            scoredStudents: 0,
-            totalRisk: 0,
-          });
-        }
-
-        facultyMap.get(faculty).students += 1;
-      });
-
-      // =====================================================
       // 4. Load burnout risk scores
-      // =====================================================
-
       const { data: scores, error: scoresError } = await supabase
         .from("burnout_risk_scores")
         .select("student_id, risk_score, risk_level, week_start")
@@ -740,64 +718,74 @@ export default function AdminDashboard({
         ? allScores.filter((item) => item.week_start === latestWeekStart)
         : [];
 
-      // =====================================================
       // 5. Add latest scores to each faculty
-      // =====================================================
+      const facultyMap = new Map();
+
+      // Prevent the same student from being counted more than once if duplicate score rows exist for the same week.
+      const latestScoreByStudent = new Map();
 
       latestScores.forEach((score) => {
-        const student = studentMap.get(String(score.student_id));
+        const studentId = String(score.student_id || "");
 
-        if (!student) return;
+        if (!studentId || !studentMap.has(studentId)) {
+          return;
+        }
+
+        latestScoreByStudent.set(studentId, score);
+      });
+
+      latestScoreByStudent.forEach((score, studentId) => {
+        const student = studentMap.get(studentId);
+
+        if (!student) {
+          return;
+        }
 
         const faculty = student.faculty || "Unassigned";
 
+        // Only show the five supported faculty groups.
+        if (
+          !Object.prototype.hasOwnProperty.call(MOCK_FACULTY_STUDENTS, faculty)
+        ) {
+          return;
+        }
+
+        if (!facultyMap.has(faculty)) {
+          facultyMap.set(faculty, {
+            faculty,
+            studentIds: new Set(),
+            totalRisk: 0,
+          });
+        }
+
         const facultyData = facultyMap.get(faculty);
 
-        if (!facultyData) return;
-
-        facultyData.scoredStudents += 1;
+        facultyData.studentIds.add(studentId);
         facultyData.totalRisk += Number(score.risk_score || 0);
       });
 
-      // =====================================================
-      // 6. Faculty Risk Breakdown
-      //
-      // Risk percentage =
-      // total latest risk score / total faculty students
-      //
-      // Students without a latest score are treated as 0.
-      // =====================================================
+      // 6. Risk percentage calculation formula = total latest risk score / total faculty students
+      const facultyBreakdown = Object.keys(MOCK_FACULTY_STUDENTS)
+        .map((faculty) => {
+          const facultyData = facultyMap.get(faculty);
 
-      const facultyBreakdown = Array.from(facultyMap.values())
-        .map((facultyData) => {
-          /*
-      Faculty risk is calculated from students who have a score
-      in the latest available week.
+          const scoredStudents = facultyData?.studentIds.size || 0;
 
-      Formula:
-      total latest risk score / students scored in latest week
-    */
-          const risk =
-            facultyData.scoredStudents > 0
-              ? Math.round(facultyData.totalRisk / facultyData.scoredStudents)
-              : 0;
-
-          const coverage =
-            facultyData.students > 0
-              ? Math.round(
-                  (facultyData.scoredStudents / facultyData.students) * 100,
-                )
+          const averageRisk =
+            scoredStudents > 0
+              ? Math.round(facultyData.totalRisk / scoredStudents)
               : 0;
 
           return {
-            faculty: facultyData.faculty,
-            students: facultyData.students,
-            scoredStudents: facultyData.scoredStudents,
-            coverage,
-            risk: Math.min(100, Math.max(0, risk)),
+            faculty,
+
+            // This count now includes only users found in burnout_risk_scores for the latest available week.
+            students: scoredStudents,
+            scoredStudents,
+
+            risk: Math.min(100, Math.max(0, averageRisk)),
           };
         })
-        .filter((facultyData) => facultyData.students > 0)
         .sort((a, b) => {
           if (b.risk !== a.risk) {
             return b.risk - a.risk;
@@ -806,25 +794,22 @@ export default function AdminDashboard({
           return b.students - a.students;
         });
 
-      // =====================================================
       // 7. Campus-wide current risk score
-      //
-      // This also uses every student as the denominator.
-      // Students without a score contribute 0.
-      // =====================================================
-
       const totalCampusRisk = latestScores.reduce(
         (sum, item) => sum + Number(item.risk_score || 0),
         0,
       );
 
+      const latestScoredStudentIds = new Set(
+        latestScores.map((item) => String(item.student_id || "")).filter(Boolean),
+      );
+
       const campusRiskScore =
-        students.length > 0 ? Math.round(totalCampusRisk / students.length) : 0;
+        latestScoredStudentIds.size > 0
+          ? Math.round(totalCampusRisk / latestScoredStudentIds.size)
+          : 0;
 
-      // =====================================================
       // 8. Count medium-risk and high-risk students
-      // =====================================================
-
       const atRiskStudentIds = new Set(
         latestScores
           .filter((item) => {
@@ -848,10 +833,7 @@ export default function AdminDashboard({
           .map((item) => item.student_id),
       );
 
-      // =====================================================
       // 9. Build the four-week campus risk trend
-      // =====================================================
-
       const weekMap = {};
 
       allScores.forEach((item) => {
@@ -868,13 +850,28 @@ export default function AdminDashboard({
         }
 
         weekMap[weekStart].totalRisk += Number(item.risk_score || 0);
-
         weekMap[weekStart].scoredStudentIds.add(String(item.student_id));
       });
 
+      // Use today's local date.
+      const today = new Date();
+
+      // Remove the current time so date comparisons remain consistent.
+      today.setHours(0, 0, 0, 0);
+
+      const daysSinceMonday = (today.getDay() + 6) % 7;
+
+      // Find the Monday of the current week.
+      const currentWeekStart = new Date(today);
+      currentWeekStart.setDate(today.getDate() - daysSinceMonday);
+
+      // The four-week period begins three Mondays before the current week.
+      const fourWeekWindowStart = new Date(currentWeekStart);
+      fourWeekWindowStart.setDate(currentWeekStart.getDate() - 21);
+
       const weeklyTrend = Object.values(weekMap)
         .sort((a, b) => new Date(a.weekStart) - new Date(b.weekStart))
-        .slice(-5)
+        .slice(-4)
         .map((item, index) => ({
           week: `W${index + 1}`,
 
@@ -886,17 +883,14 @@ export default function AdminDashboard({
             },
           ),
 
-          // Every student remains part of the denominator.
+          // Average only the students scored during this specific week.
           risk:
-            students.length > 0
-              ? Math.round(item.totalRisk / students.length)
+            item.scoredStudentIds.size > 0
+              ? Math.round(item.totalRisk / item.scoredStudentIds.size)
               : 0,
         }));
 
-      // =====================================================
       // 10. Load wellness recommendations
-      // =====================================================
-
       let recommendationList = analytics.burnoutTelemetry.recommendations || [];
 
       const { data: recommendations, error: recommendationsError } =
@@ -915,10 +909,7 @@ export default function AdminDashboard({
         recommendationList = recommendations.map((item) => item.recommendation);
       }
 
-      // =====================================================
       // 11. Update dashboard state
-      // =====================================================
-
       setBurnoutAnalytics({
         ...analytics.burnoutTelemetry,
 
@@ -1634,52 +1625,36 @@ export default function AdminDashboard({
                   icon={Users}
                   label="Total Students"
                   value={totalStudents.toLocaleString()} // New: Display total students count
-                  // change="+12%"
-                  // changeType="up"
                   color="#3B82F6"
                 />
                 <StatCard
                   icon={Zap}
                   label="Active Today"
                   value={activeToday.toLocaleString()}
-                  // change="+8%"
-                  // changeType="up"
                   color="#10B981"
                 />
                 <StatCard
                   icon={Calendar}
                   label="Total Events"
                   value={adminEvents.length}
-                  // change={
-                  //   adminEvents.length < 17
-                  //     ? `-${17 - adminEvents.length}`
-                  //     : `+${adminEvents.length - 17}`
-                  // }
-                  // changeType={adminEvents.length < 17 ? "down" : "up"}
                   color="#F59E0B"
                 />
                 <StatCard
                   icon={TrendingUp}
                   label="Avg Match Score"
                   value={`${avgMatchScore}%`}
-                  // change="+2.3%"
-                  // changeType="up"
                   color="#8B5CF6"
                 />
                 <StatCard
                   icon={Star}
                   label="Total RSVPs"
                   value={totalRSVPs.toLocaleString()}
-                  // change="+15%"
-                  // changeType="up"
                   color="#EC4899"
                 />
                 <StatCard
                   icon={Activity}
                   label="Attendance Rate"
                   value={`${attendanceRate}%`}
-                  // change="-1.2%"
-                  // changeType="down"
                   color="#EF4444"
                 />
               </div>
@@ -1992,6 +1967,13 @@ export default function AdminDashboard({
                     Anonymized, aggregated campus wellness analytics
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={refreshBurnoutRiskScores}
+                  className="rounded-lg bg-yellow-500/10 px-3 py-2 text-[10px] font-inter font-semibold text-yellow-400 transition-colors hover:bg-yellow-500/20"
+                >
+                  Recalculate Scores
+                </button>
               </div>
 
               {/* Risk Overview */}
@@ -2040,12 +2022,11 @@ export default function AdminDashboard({
               </div>
 
               {/* New: Weekly Trend Line Chart */}
-              {/* Weekly Risk Trend - Line Chart */}
               <div className="glass rounded-2xl p-5 mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="text-sm font-outfit font-semibold text-white">
-                      Risk Trend (4 Weeks)
+                      Weekly Risk Trend
                     </h3>
                     <p className="text-[9px] font-inter text-gray-500 mt-0.5">
                       Weekly campus burnout risk score
@@ -2315,7 +2296,7 @@ export default function AdminDashboard({
                     </h3>
 
                     <p className="mt-0.5 text-[10px] font-inter text-gray-500">
-                      Latest faculty risk score across all students
+                      Average risk among students scored in the latest week
                     </p>
                   </div>
 
@@ -2367,10 +2348,8 @@ export default function AdminDashboard({
                                 </p>
 
                                 <p className="mt-0.5 text-[9px] font-inter text-gray-600">
-                                  {fac.students} student
+                                  {fac.students} scored student
                                   {fac.students === 1 ? "" : "s"}
-                                  {" · "}
-                                  {fac.scoredStudents} scored this week
                                 </p>
                               </div>
 
@@ -2430,9 +2409,9 @@ export default function AdminDashboard({
                 )}
 
                 <p className="mt-4 border-t border-white/5 pt-3 text-[9px] font-inter text-gray-600">
-                  Faculty risk percentage = total latest risk scores ÷ total
-                  students in that faculty. Students without a score are counted
-                  as 0 for the selected week.
+                  Faculty risk percentage = total latest risk scores ÷ students
+                  from that faculty with a burnout score in the latest week.
+                  Students without a burnout score are excluded.
                 </p>
               </div>
 
@@ -2603,7 +2582,6 @@ export default function AdminDashboard({
         </AnimatePresence>
       </div>
 
-      {/* Create Event Modal — Bottom Sheet Style */}
       {/* Create / Edit Event Modal */}
       <AnimatePresence>
         {showEventModal && (
@@ -2633,11 +2611,6 @@ export default function AdminDashboard({
                   <h3 className="text-lg font-outfit font-bold text-white">
                     {eventModalMode === "edit" ? "Edit Event" : "Create Event"}
                   </h3>
-                  {/* <p className="text-[10px] font-inter text-gray-500">
-                    {isSupabaseOnline
-                      ? "Connected to Supabase"
-                      : "Local demo mode"}
-                  </p> */}
                 </div>
 
                 <button
