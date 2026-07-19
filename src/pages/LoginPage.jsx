@@ -16,6 +16,7 @@ import {
 import {
   signInWithPassword,
   signUpStudent,
+  getFacultyFromProgramme,
   sendPasswordReset,
   updatePassword,
 } from "../libs/auth";
@@ -118,11 +119,19 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
     }
 
     try {
+      const faculty = getFacultyFromProgramme(regProgramme);
+
+      if (!faculty) {
+        setError("The selected programme does not have a faculty mapping.");
+        return;
+      }
+
       const result = await signUpStudent({
         fullName: regName,
         email: normalizedEmail,
         password: regPassword,
         programme: regProgramme,
+        faculty,
       });
 
       if (result.session) {
@@ -131,6 +140,7 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
           full_name: regName.trim(),
           role: "student",
           programme: regProgramme,
+          faculty,
         };
         onLogin({ type: "student", user });
         return;

@@ -10,74 +10,23 @@ const VALID_ROLES = new Set([
 
 const ADMIN_ROLES = new Set(["admin", "analytics_viewer", "super_admin"]);
 
-export function getFacultyFromProgramme(programme) {
-  const value = String(programme || "").toLowerCase();
+export const PROGRAMME_FACULTY_MAP = Object.freeze({
+  "Bachelor of Computer Science (Hons.)": "Computing",
+  "Bachelor of Software Engineering (Hons.)": "Computing",
+  "Bachelor of Business (Hons.)": "Business",
+  "Bachelor of Accounting (Hons.)": "Business",
+  "Bachelor of Psychology (Hons.)": "General Studies",
+  "Foundation in Arts": "General Studies",
+  "Foundation in Business": "Business",
+  "Diploma in Communication": "Communication",
+  "Diploma in Information Technology": "Computing",
+  "Diploma in Hospitality Management": "Hospitality",
+});
 
-  if (
-    value.includes("computer") ||
-    value.includes("software") ||
-    value.includes("information technology") ||
-    value.includes("artificial intelligence")
-  ) {
-    return "Computing";
-  }
-
-  if (value.includes("engineering")) return "Engineering";
-
-  if (
-    value.includes("business") ||
-    value.includes("accounting") ||
-    value.includes("marketing")
-  ) {
-    return "Business";
-  }
-
-  if (value.includes("design") || value.includes("communication")) {
-    return "Design";
-  }
-
-  if (
-    value.includes("hospitality") ||
-    value.includes("tourism") ||
-    value.includes("culinary")
-  ) {
-    return "Hospitality";
-  }
-
-  if (value.includes("psychology")) return "Social Sciences";
-
-  return "General Studies";
-}
-
-export async function completeUserProfile({ programme }) {
+export const getFacultyFromProgramme = (programme) => {
   const normalizedProgramme = String(programme || "").trim();
-
-  if (!normalizedProgramme) {
-    throw new Error("Please select your programme.");
-  }
-
-  const {
-    data: { user: authUser },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) throw userError;
-  if (!authUser?.id) throw new Error("No authenticated user was found.");
-
-  const faculty = getFacultyFromProgramme(normalizedProgramme);
-
-  const { error } = await supabase
-    .from("users")
-    .update({
-      programme: normalizedProgramme,
-      faculty,
-    })
-    .eq("id", authUser.id);
-
-  if (error) throw error;
-
-  return getCurrentSupabaseUser(authUser);
-}
+  return PROGRAMME_FACULTY_MAP[normalizedProgramme] || "";
+};
 
 export const normalizeRole = (role) => {
   const normalized = String(role || "student")
@@ -259,6 +208,40 @@ export async function signInWithPassword(email, password) {
   };
 }
 
+
+async function saveSignupProfile({
+  userId,
+  fullName,
+  email,
+  role,
+  faculty,
+  programme,
+}) {
+  const profile = {
+    id: userId,
+    full_name: fullName,
+    email,
+    role,
+    faculty: faculty || null,
+    programme: programme || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  // The auth trigger normally creates this row first. Upsert also covers
+  // projects where the trigger has not been installed yet.
+  const { data, error } = await supabase
+    .from("users")
+    .upsert(profile, { onConflict: "id" })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Account created, but the student profile could not be saved: ${error.message}`);
+  }
+
+  return data;
+}
+
 //  * Anyone may sign up student, admin, analytics_viewer, or super_admin.
 export async function signUpUser({
   fullName,
@@ -275,6 +258,12 @@ export async function signUpUser({
     .toLowerCase();
 
   const normalizedRole = normalizeRole(role);
+  const normalizedProgramme = String(programme || "").trim();
+  const mappedFaculty = getFacultyFromProgramme(normalizedProgramme);
+  const normalizedFaculty =
+    normalizedRole === "student"
+      ? mappedFaculty
+      : String(faculty || "").trim();
 
   if (!normalizedName) {
     throw new Error("Full name is required.");
@@ -292,6 +281,14 @@ export async function signUpUser({
     throw new Error("Password must contain at least 6 characters.");
   }
 
+  if (normalizedRole === "student" && !normalizedProgramme) {
+    throw new Error("Programme is required for student registration.");
+  }
+
+  if (normalizedRole === "student" && !mappedFaculty) {
+    throw new Error("The selected programme does not have a valid faculty mapping.");
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email: normalizedEmail,
     password,
@@ -301,8 +298,8 @@ export async function signUpUser({
         full_name: normalizedName,
         role: normalizedRole,
         account_type: normalizedRole,
-        faculty: faculty || null,
-        programme: programme || null,
+        faculty: normalizedFaculty || null,
+        programme: normalizedProgramme || null,
       },
     },
   });
@@ -316,21 +313,39 @@ export async function signUpUser({
   }
 
   /*
-   * public.users is automatically created by
-   * the on_auth_user_created database trigger.
+   * When email confirmation is disabled, a session is available and the
+   * frontend saves the public.users row immediately. When confirmation is
+   * enabled, the database trigger uses the same metadata to create the row.
    */
-
   if (data.session) {
-    return getCurrentSupabaseUser(data.user);
+    await saveSignupProfile({
+      userId: data.user.id,
+      fullName: normalizedName,
+      email: normalizedEmail,
+      role: normalizedRole,
+      faculty: normalizedFaculty,
+      programme: normalizedProgramme,
+    });
+
+    const profileUser = await getCurrentSupabaseUser(data.user);
+
+    return {
+      user: profileUser,
+      session: data.session,
+      requiresEmailConfirmation: false,
+    };
   }
 
   return {
-    ...data.user,
-    full_name: normalizedName,
-    email: normalizedEmail,
-    role: normalizedRole,
-    faculty,
-    programme,
+    user: {
+      ...data.user,
+      full_name: normalizedName,
+      email: normalizedEmail,
+      role: normalizedRole,
+      faculty: normalizedFaculty,
+      programme: normalizedProgramme,
+    },
+    session: null,
     requiresEmailConfirmation: true,
   };
 }

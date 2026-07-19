@@ -35,7 +35,6 @@ import {
 } from "./data/db";
 import LoginPage from "./pages/LoginPage";
 import Profile from "./pages/Profile";
-import CompleteProfilePage from "./pages/CompleteProfilePage";
 import Chatbot from "./components/Chatbot";
 import Toast from "./components/Toast";
 import { supabase } from "./libs/supabase";
@@ -82,7 +81,7 @@ export default function App() {
     sessionStorage.setItem("taylors_active_tab", activeTab);
   }, [activeTab]);
 
-  const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'complete-profile' | 'app'
+  const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'app'
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
   const profileApplySequenceRef = useRef(0);
@@ -104,7 +103,6 @@ export default function App() {
   const [displayName, setDisplayName] = useState("Student");
   const [currentEmail, setCurrentEmail] = useState("");
   const [currentProgramme, setCurrentProgramme] = useState("");
-  const [pendingProfileUser, setPendingProfileUser] = useState(null);
   const [mode, setMode] = useState("focus"); // 'focus' | 'balance'
   const [points, setPoints] = useState(() => getUserPoints("guest", 1240));
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -369,15 +367,6 @@ export default function App() {
           console.warn("Unable to restore AI meter history:", error);
         });
     }
-
-    // Students must complete their programme first.
-    if (role === "student" && programme.length === 0) {
-      setPendingProfileUser(user);
-      setCurrentScreen("complete-profile");
-      return true;
-    }
-
-    setPendingProfileUser(null);
 
     if (resetTab) {
       setActiveTab("home");
@@ -1388,34 +1377,6 @@ export default function App() {
                   applyAuthenticatedUser(user, {
                     resetTab: true,
                     allowAccountChange: true,
-                    requestSequence,
-                  });
-                }}
-              />
-            </motion.div>
-          )}
-
-          {currentScreen === "complete-profile" && (
-            <motion.div
-              key="complete-profile"
-              className="
-  absolute inset-0 z-50
-  overflow-x-hidden overflow-y-auto
-  overscroll-y-auto
-  bg-[#050508]
-  touch-pan-y
-  [-webkit-overflow-scrolling:touch]
-"
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            >
-              <CompleteProfilePage
-                user={pendingProfileUser}
-                onCompleted={(completedUser) => {
-                  const requestSequence = ++profileApplySequenceRef.current;
-
-                  applyAuthenticatedUser(completedUser, {
-                    resetTab: true,
-                    allowAccountChange: false,
                     requestSequence,
                   });
                 }}
