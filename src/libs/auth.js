@@ -121,9 +121,8 @@ async function updateAdminLastLogin(userId, role) {
   return data.last_login || lastLogin;
 }
 
-/**
- * Gets the currently authenticated Supabase user and combines it
- * with the matching public.users profile.
+/*
+ * Gets the currently authenticated Supabase user and combines it with the matching public.users profile.
  */
 export async function getCurrentSupabaseUser(sessionUser = null) {
   let authUser = sessionUser;
@@ -141,7 +140,7 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
     authUser = user;
   }
 
-  if (!authUser) {
+  if (!authUser?.id) {
     return null;
   }
 
@@ -157,21 +156,32 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
         programme,
         avatar,
         last_login,
-        created_at
+        last_active_at,
+        created_at,
+        updated_at
       `,
     )
     .eq("id", authUser.id)
     .maybeSingle();
 
   if (profileError) {
-    throw profileError;
+    throw new Error(
+      `Unable to load the authenticated user profile: ${profileError.message}`,
+    );
+  }
+
+  /*
+   * Important:
+   * Do not return a user with role "student" when the database profile was not loaded.
+   */
+  if (!profile) {
+    throw new Error(
+      "The authenticated account exists, but its public.users profile could not be loaded.",
+    );
   }
 
   const metadata = authUser.user_metadata || {};
-
-  const role = normalizeRole(
-    profile?.role || metadata.role || metadata.account_type || "student",
-  );
+  const role = normalizeRole(profile.role);
 
   return {
     ...authUser,
@@ -179,10 +189,10 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
 
     id: authUser.id,
 
-    email: profile?.email || authUser.email || "",
+    email: profile.email || authUser.email || "",
 
     full_name:
-      profile?.full_name ||
+      profile.full_name ||
       metadata.full_name ||
       metadata.name ||
       authUser.email?.split("@")[0] ||
@@ -190,13 +200,13 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
 
     role,
 
-    faculty: profile?.faculty || metadata.faculty || "",
+    faculty: profile.faculty || "",
 
-    programme: profile?.programme || metadata.programme || "",
+    programme: profile.programme || "",
 
     avatar:
-      profile?.avatar ||
-      (profile?.full_name || metadata.full_name || authUser.email || "U")
+      profile.avatar ||
+      (profile.full_name || metadata.full_name || authUser.email || "U")
         .charAt(0)
         .toUpperCase(),
 
