@@ -17,80 +17,114 @@ export async function createAdminAccount({
   role,
   faculty = "Computing",
 }) {
-  const normalizedName = fullName.trim();
-  const normalizedEmail = email.trim().toLowerCase();
-  const dbRole = ROLE_MAP[role] || "admin";
+  const normalizedName = String(
+    fullName || "",
+  ).trim();
 
-  /*
-   * Create account in Supabase Auth.
-   *
-   * Prefer using a database trigger to create public.users.
-   * Creating another user's Auth account from the browser can also
-   * change the current Supabase session, depending on email-confirmation
-   * settings.
-   */
-  const { data: authData, error: authError } = await supabase.auth.signUp({
-    email: normalizedEmail,
-    password,
-    options: {
-      data: {
-        full_name: normalizedName,
-        role: dbRole,
-        faculty,
-        account_type: "admin",
-      },
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  const normalizedPassword = String(
+    password || "",
+  ).trim();
+
+  const normalizedFaculty =
+    String(faculty || "Computing").trim() ||
+    "Computing";
+
+  const dbRole = ROLE_MAP[role];
+
+  if (!normalizedName) {
+    throw new Error("Full name is required.");
+  }
+
+  if (!normalizedEmail.endsWith("@taylors.edu.my")) {
+    throw new Error(
+      "Please use a valid Taylor's staff email.",
+    );
+  }
+
+  if (normalizedPassword.length < 8) {
+    throw new Error(
+      "Password must contain at least 8 characters.",
+    );
+  }
+
+  if (!dbRole) {
+    throw new Error("Please select a valid admin role.");
+  }
+
+  // Read the current administrator's existing session. This session is only sent as authorization to the API.
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    throw sessionError;
+  }
+
+  if (!session?.access_token) {
+    throw new Error(
+      "Your administrator session has expired. Please sign in again.",
+    );
+  }
+
+  const response = await fetch("/api/create-admin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
     },
+    body: JSON.stringify({
+      fullName: normalizedName,
+      email: normalizedEmail,
+      password: normalizedPassword,
+      role: dbRole,
+      faculty: normalizedFaculty,
+    }),
   });
 
-  if (authError) {
-    throw authError;
+  const result = await response
+    .json()
+    .catch(() => ({
+      error: "The server returned an invalid response.",
+    }));
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+        "Unable to create administrator account.",
+    );
   }
 
-  if (!authData?.user?.id) {
-    throw new Error("Supabase did not return an admin user ID.");
-  }
-
-  /*
-   * Use this only when you do not have an Auth trigger.
-   * If your trigger already inserts public.users, remove this block
-   * to avoid duplicate insertion.
-   */
-  const { error: profileError } = await supabase.from("users").upsert(
-    {
-      id: authData.user.id,
-      full_name: normalizedName,
-      email: normalizedEmail,
-      role: dbRole,
-      faculty,
-      avatar: normalizedName.charAt(0).toUpperCase(),
-      created_at: new Date().toISOString(),
-    },
-    {
-      onConflict: "id",
-    },
-  );
-
-  if (profileError) {
-    throw profileError;
-  }
-
-  return {
-    id: authData.user.id,
-    full_name: normalizedName,
-    email: normalizedEmail,
-    role: dbRole,
-    faculty,
-  };
+  return result.user;
 }
 
 export async function getAdminUsers() {
   const { data, error } = await supabase
     .from("users")
     .select(
-      "id, full_name, email, role, faculty, avatar, last_login, created_at",
+      `
+        id,
+        full_name,
+        email,
+        role,
+        faculty,
+        avatar,
+        last_login,
+        created_at
+      `,
     )
-    .in("role", ["super_admin", "admin", "analytics_viewer"])
-    .order("created_at", { ascending: true });
+    .in("role", [
+      "super_admin",
+      "admin",
+      "analytics_viewer",
+    ])
+    .order("created_at", {
+      ascending: true,
+    });
 
   if (error) {
     throw error;

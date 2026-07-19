@@ -51,17 +51,22 @@ import {
   saveAIMeterHistory,
   fetchLatestAIMeterHistory,
 } from "./services/aiMeterService";
-import {
-  registerForEvent,
-  cancelEventRSVP,
-} from "./services/rsvpService";
-import { recordEventAttendance } from "./services/attendanceService";
+import { registerForEvent, cancelEventRSVP } from "./services/rsvpService";
 
 const saveStudentActivity = (activity) => {
   createStudentActivity(activity).catch((error) => {
     console.error("Unable to save student activity to Supabase:", error);
   });
 };
+
+const VALID_APP_ROLES = new Set([
+  "student",
+  "admin",
+  "analytics_viewer",
+  "super_admin",
+]);
+
+const ADMIN_APP_ROLES = new Set(["admin", "analytics_viewer", "super_admin"]);
 
 export default function App() {
   const MANUAL_LOGOUT_KEY = "taylors_manual_logout";
@@ -81,10 +86,15 @@ export default function App() {
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
   const currentProgrammeRef = useRef("");
+  const profileApplySequenceRef = useRef(0);
+  const confirmedAuthUserRef = useRef({
+    id: null,
+    role: null,
+    displayName: null,
+  });
 
   /*
-   * Prevent restoreSession(), SIGNED_IN and profile refresh from
-   * loading or creating the same public.users profile simultaneously.
+   * Prevent restoreSession(), SIGNED_IN and profile refresh from loading or creating the same public.users profile simultaneously.
    */
   const authProfileRequestRef = useRef({
     userId: null,
@@ -223,16 +233,76 @@ export default function App() {
   }, []);
 
   const applyAuthenticatedUser = useCallback((user, options = {}) => {
-    const { resetTab = false } = options;
+    const {
+      resetTab = false,
+      allowAccountChange = false,
+      requestSequence = null,
+    } = options;
 
-    if (!user) {
-      setCurrentScreen("login");
-      return;
+    if (!user?.id) {
+      console.error(
+        "Authenticated profile was ignored because it has no user ID.",
+        user,
+      );
+      return false;
     }
 
-    const role = String(user.role || "student")
+    /*
+     * Ignore an older asynchronous profile request when a newer
+     * request has already started.
+     */
+    if (
+      requestSequence !== null &&
+      requestSequence !== profileApplySequenceRef.current
+    ) {
+      console.warn("Ignored a stale authenticated profile response.");
+      return false;
+    }
+
+    const userId = String(user.id).trim();
+
+    /*
+     * Never use `|| "student"` here.
+     * A missing role means the profile result is incomplete.
+     */
+    const role = String(user.role || "")
       .trim()
       .toLowerCase();
+
+    if (!VALID_APP_ROLES.has(role)) {
+      console.error(
+        "Authenticated profile was ignored because it has an invalid role:",
+        user.role,
+      );
+      return false;
+    }
+
+    const previousConfirmedUser = confirmedAuthUserRef.current;
+    const isSameAuthenticatedUser =
+      previousConfirmedUser.id && String(previousConfirmedUser.id) === userId;
+
+    /*
+     * Defensive protection:
+     * A temporary refresh must not downgrade the same confirmed
+     * administrator account to student.
+     *
+     * A real switch to another account is still allowed after
+     * SIGNED_IN passes allowAccountChange: true.
+     */
+    if (
+      isSameAuthenticatedUser &&
+      ADMIN_APP_ROLES.has(previousConfirmedUser.role) &&
+      role === "student" &&
+      !allowAccountChange
+    ) {
+      console.error("Blocked an unexpected admin-to-student role downgrade.", {
+        userId,
+        previousRole: previousConfirmedUser.role,
+        receivedRole: role,
+      });
+
+      return false;
+    }
 
     const metadataProgramme = String(
       user.user_metadata?.programme || user.programme || "",
@@ -241,11 +311,23 @@ export default function App() {
     const programme =
       metadataProgramme || String(currentProgrammeRef.current || "").trim();
     const userKey = resolveUserKey(user);
+    const resolvedName =
+      String(user.full_name || "").trim() || resolveDisplayName(user);
+
+    /*
+     * Save the confirmed database-backed identity before updating
+     * the visible React state.
+     */
+    confirmedAuthUserRef.current = {
+      id: userId,
+      role,
+      displayName: resolvedName,
+    };
 
     localStorage.removeItem(MANUAL_LOGOUT_KEY);
 
     setUserRole(role);
-    setDisplayName(user.full_name || resolveDisplayName(user));
+    setDisplayName(resolvedName);
     setCurrentEmail(String(user.email || "").trim());
     setCurrentProgramme(programme);
     currentProgrammeRef.current = programme;
@@ -257,11 +339,21 @@ export default function App() {
       fetchLatestAIMeterHistory(userKey)
         .then((row) => {
           if (!row) return;
+
+          /*
+           * Do not apply history from a previously logged-in account.
+           */
+          if (String(confirmedAuthUserRef.current.id || "") !== userId) {
+            return;
+          }
+
           const focusScore = Number(row.focus_score);
           const balanceScore = Number(row.balance_score);
+
           if (!Number.isFinite(focusScore) || !Number.isFinite(balanceScore)) {
             return;
           }
+
           const next = setAIMeterState(
             {
               focusScore,
@@ -277,26 +369,29 @@ export default function App() {
             },
             userKey,
           );
+
           setAiMeter(next);
         })
-        .catch(() => {});
+        .catch((error) => {
+          console.warn("Unable to restore AI meter history:", error);
+        });
     }
 
     // Students must complete their programme first.
     if (role === "student" && programme.length === 0) {
       setPendingProfileUser(user);
       setCurrentScreen("complete-profile");
-      return;
+      return true;
     }
 
     setPendingProfileUser(null);
 
-    // Only reset to Home immediately after a real login.
     if (resetTab) {
       setActiveTab("home");
     }
 
     setCurrentScreen("app");
+    return true;
   }, []);
 
   useEffect(() => {
@@ -324,7 +419,11 @@ export default function App() {
       setCurrentScreen("login");
       // Clear tokens from the URL after Supabase has consumed them.
       if (typeof window !== "undefined" && window.history?.replaceState) {
-        window.history.replaceState({}, document.title, window.location.pathname);
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname,
+        );
       }
     };
 
@@ -359,6 +458,8 @@ export default function App() {
         }
 
         // Keep displaying auth-loading while the public.users row is loaded.
+        const requestSequence = ++profileApplySequenceRef.current;
+
         const userProfile = await loadAuthenticatedProfile(session.user);
 
         if (!isMounted) return;
@@ -367,11 +468,15 @@ export default function App() {
           console.error(
             "Supabase authentication exists, but the public.users profile could not be loaded.",
           );
+
           setCurrentScreen("login");
           return;
         }
 
-        applyAuthenticatedUser(userProfile);
+        applyAuthenticatedUser(userProfile, {
+          requestSequence,
+          allowAccountChange: true,
+        });
       } catch (error) {
         console.error("Failed to restore Supabase session:", error);
 
@@ -408,6 +513,13 @@ export default function App() {
           userId: null,
           promise: null,
         };
+        profileApplySequenceRef.current += 1;
+
+        confirmedAuthUserRef.current = {
+          id: null,
+          role: null,
+          displayName: null,
+        };
         passwordRecoveryRef.current = false;
         setPasswordRecovery(false);
         setUserRole("student");
@@ -422,7 +534,11 @@ export default function App() {
         setCurrentScreen("landing");
         return;
       }
-      if (event !== "SIGNED_IN" && event !== "USER_UPDATED") {
+      if (
+        event !== "SIGNED_IN" &&
+        event !== "USER_UPDATED" &&
+        event !== "TOKEN_REFRESHED"
+      ) {
         return;
       }
 
@@ -431,15 +547,36 @@ export default function App() {
         return;
       }
 
+      const requestSequence = ++profileApplySequenceRef.current;
+
       window.setTimeout(async () => {
         try {
           const user = await loadAuthenticatedProfile(session.user);
 
-          if (isMounted && user) {
-            applyAuthenticatedUser(user);
+          if (!isMounted || !user) {
+            return;
           }
+
+          applyAuthenticatedUser(user, {
+            requestSequence,
+
+            /*
+             * A SIGNED_IN event may represent a real account change.
+             * TOKEN_REFRESHED and USER_UPDATED must preserve the
+             * currently confirmed account role.
+             */
+            allowAccountChange: event === "SIGNED_IN",
+          });
         } catch (error) {
-          console.error("Failed to refresh authenticated user:", error);
+          console.error(
+            `Failed to refresh authenticated user after ${event}:`,
+            error,
+          );
+
+          /*
+           * Keep the previous confirmed user.
+           * Do not reset userRole or displayName here.
+           */
         }
       }, 0);
     });
@@ -473,10 +610,15 @@ export default function App() {
           return;
         }
 
+        const requestSequence = ++profileApplySequenceRef.current;
+
         const user = await loadAuthenticatedProfile(session.user);
 
         if (isMounted && user) {
-          applyAuthenticatedUser(user);
+          applyAuthenticatedUser(user, {
+            requestSequence,
+            allowAccountChange: false,
+          });
         }
       } catch (error) {
         if (
@@ -595,10 +737,7 @@ export default function App() {
       }
     };
 
-    window.addEventListener(
-      timetableSyncEventName,
-      handleTimetableSyncUpdate,
-    );
+    window.addEventListener(timetableSyncEventName, handleTimetableSyncUpdate);
 
     return () => {
       window.removeEventListener(
@@ -939,6 +1078,18 @@ export default function App() {
       promise: null,
     };
 
+    /*
+     * Invalidates every pending profile refresh and clears the
+     * last confirmed administrator identity.
+     */
+    profileApplySequenceRef.current += 1;
+
+    confirmedAuthUserRef.current = {
+      id: null,
+      role: null,
+      displayName: null,
+    };
+
     setShowAdmin(false);
     setShowNotifications(false);
     setShowEventDetail(false);
@@ -1262,7 +1413,13 @@ export default function App() {
                     }
                     const profile = await loadAuthenticatedProfile(authUser);
                     if (profile) {
-                      applyAuthenticatedUser(profile, { resetTab: true });
+                      const requestSequence = ++profileApplySequenceRef.current;
+
+                      applyAuthenticatedUser(profile, {
+                        resetTab: true,
+                        allowAccountChange: true,
+                        requestSequence,
+                      });
                     }
                   } catch (error) {
                     console.error("Post-reset login failed:", error);
@@ -1272,7 +1429,14 @@ export default function App() {
                 onLogin={({ user }) => {
                   passwordRecoveryRef.current = false;
                   setPasswordRecovery(false);
-                  applyAuthenticatedUser(user, { resetTab: true });
+
+                  const requestSequence = ++profileApplySequenceRef.current;
+
+                  applyAuthenticatedUser(user, {
+                    resetTab: true,
+                    allowAccountChange: true,
+                    requestSequence,
+                  });
                 }}
               />
             </motion.div>
@@ -1294,7 +1458,13 @@ export default function App() {
               <CompleteProfilePage
                 user={pendingProfileUser}
                 onCompleted={(completedUser) => {
-                  applyAuthenticatedUser(completedUser, { resetTab: true });
+                  const requestSequence = ++profileApplySequenceRef.current;
+
+                  applyAuthenticatedUser(completedUser, {
+                    resetTab: true,
+                    allowAccountChange: false,
+                    requestSequence,
+                  });
                 }}
               />
             </motion.div>
@@ -1579,9 +1749,7 @@ export default function App() {
       {currentScreen === "app" &&
         !showAdmin &&
         !showNotifications &&
-        !showEventDetail && (
-          <Chatbot mode={mode} displayName={displayName} />
-        )}
+        !showEventDetail && <Chatbot mode={mode} displayName={displayName} />}
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
