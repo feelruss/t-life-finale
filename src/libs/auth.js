@@ -1,3 +1,4 @@
+// This is the src/libs/auth.js file
 import { supabase } from "../libs/supabase";
 
 const VALID_ROLES = new Set([
@@ -7,6 +8,7 @@ const VALID_ROLES = new Set([
   "super_admin",
 ]);
 
+const ADMIN_ROLES = new Set(["admin", "analytics_viewer", "super_admin"]);
 
 export function getFacultyFromProgramme(programme) {
   const value = String(programme || "").toLowerCase();
@@ -30,10 +32,7 @@ export function getFacultyFromProgramme(programme) {
     return "Business";
   }
 
-  if (
-    value.includes("design") ||
-    value.includes("communication")
-  ) {
+  if (value.includes("design") || value.includes("communication")) {
     return "Design";
   }
 
@@ -72,7 +71,6 @@ export async function completeUserProfile({ programme }) {
     .update({
       programme: normalizedProgramme,
       faculty,
-      last_login: new Date().toISOString(),
     })
     .eq("id", authUser.id);
 
@@ -89,6 +87,39 @@ export const normalizeRole = (role) => {
 
   return VALID_ROLES.has(normalized) ? normalized : "student";
 };
+
+async function updateAdminLastLogin(userId, role) {
+  const normalizedRole = normalizeRole(role);
+
+  if (!userId || !ADMIN_ROLES.has(normalizedRole)) {
+    return null;
+  }
+
+  const lastLogin = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({
+      last_login: lastLogin,
+    })
+    .eq("id", userId)
+    .select("last_login")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to update admin last login:", error);
+    return null;
+  }
+
+  if (!data) {
+    console.warn(
+      "Admin last login was not updated because no matching public.users row was found.",
+    );
+    return null;
+  }
+
+  return data.last_login || lastLogin;
+}
 
 /**
  * Gets the currently authenticated Supabase user and combines it
@@ -139,10 +170,7 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
   const metadata = authUser.user_metadata || {};
 
   const role = normalizeRole(
-    profile?.role ||
-      metadata.role ||
-      metadata.account_type ||
-      "student",
+    profile?.role || metadata.role || metadata.account_type || "student",
   );
 
   return {
@@ -151,10 +179,7 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
 
     id: authUser.id,
 
-    email:
-      profile?.email ||
-      authUser.email ||
-      "",
+    email: profile?.email || authUser.email || "",
 
     full_name:
       profile?.full_name ||
@@ -165,24 +190,13 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
 
     role,
 
-    faculty:
-      profile?.faculty ||
-      metadata.faculty ||
-      "",
+    faculty: profile?.faculty || metadata.faculty || "",
 
-    programme:
-      profile?.programme ||
-      metadata.programme ||
-      "",
+    programme: profile?.programme || metadata.programme || "",
 
     avatar:
       profile?.avatar ||
-      (
-        profile?.full_name ||
-        metadata.full_name ||
-        authUser.email ||
-        "U"
-      )
+      (profile?.full_name || metadata.full_name || authUser.email || "U")
         .charAt(0)
         .toUpperCase(),
 
@@ -190,9 +204,7 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
   };
 }
 
-/**
- * Sign in any existing student or admin account.
- */
+// Sign in any existing student or admin account.
 export async function signInWithPassword(email, password) {
   const normalizedEmail = String(email || "")
     .trim()
@@ -206,11 +218,10 @@ export async function signInWithPassword(email, password) {
     throw new Error("Password is required.");
   }
 
-  const { data, error } =
-    await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
+  });
 
   if (error) {
     throw error;
@@ -220,13 +231,25 @@ export async function signInWithPassword(email, password) {
     throw new Error("Supabase did not return a user.");
   }
 
-  return getCurrentSupabaseUser(data.user);
+  // Load the public.users profile first so that the role comes from the database rather than editable metadata.
+  const currentUser = await getCurrentSupabaseUser(data.user);
+
+  if (!currentUser) {
+    throw new Error("The authenticated user profile could not be loaded.");
+  }
+
+  const updatedLastLogin = await updateAdminLastLogin(
+    currentUser.id,
+    currentUser.role,
+  );
+
+  return {
+    ...currentUser,
+    last_login: updatedLastLogin || currentUser.last_login || null,
+  };
 }
 
-/**
- * Prototype signup.
- * Anyone may select student, admin, analytics_viewer, or super_admin.
- */
+//  * Anyone may sign up student, admin, analytics_viewer, or super_admin.
 export async function signUpUser({
   fullName,
   email,
@@ -256,9 +279,7 @@ export async function signUpUser({
   }
 
   if (!password || password.length < 6) {
-    throw new Error(
-      "Password must contain at least 6 characters.",
-    );
+    throw new Error("Password must contain at least 6 characters.");
   }
 
   const { data, error } = await supabase.auth.signUp({
@@ -281,9 +302,7 @@ export async function signUpUser({
   }
 
   if (!data.user?.id) {
-    throw new Error(
-      "Supabase did not return a user ID.",
-    );
+    throw new Error("Supabase did not return a user ID.");
   }
 
   /*
@@ -359,13 +378,9 @@ export async function sendPasswordReset(email) {
   // Land back on the app so LoginPage can show the "set new password" step.
   const redirectTo = `${window.location.origin}/`;
 
-  const { error } =
-    await supabase.auth.resetPasswordForEmail(
-      normalizedEmail,
-      {
-        redirectTo,
-      },
-    );
+  const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo,
+  });
 
   if (error) {
     throw error;
