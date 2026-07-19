@@ -441,17 +441,19 @@ export default function AdminDashboard({
     weeklyTrend: [],
   });
 
-  // New: Map activity types to icons and styles
-  const activityIcons = {
-    create: Plus,
-    update: Edit3,
-    delete: Trash2,
-  };
+  // Emoji icons for Recent Activity
+  const activityEmojis = {
+    event: {
+      create: "📅",
+      update: "📝",
+      delete: "🗑️",
+    },
 
-  const activityStyles = {
-    create: "bg-green-500/15 text-green-400",
-    update: "bg-blue-500/15 text-blue-400",
-    delete: "bg-red-500/15 text-red-400",
+    admin: {
+      create: "👤",
+      update: "🛡️",
+      delete: "🚫",
+    },
   };
 
   const analytics = adminAnalytics;
@@ -1769,19 +1771,20 @@ export default function AdminDashboard({
                   ) : (
                     recentActivities.map((act, i) => {
                       const type = act.type || "create";
-                      const Icon = activityIcons[type] || Calendar;
-                      const iconStyle =
-                        activityStyles[type] || "bg-white/10 text-gray-400";
+
+                      const entity = act.action?.startsWith("Admin")
+                        ? "admin"
+                        : "event";
+
+                      const emoji = activityEmojis[entity]?.[type] || "📌";
 
                       return (
                         <div
                           key={i}
                           className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02]"
                         >
-                          <div
-                            className={`w-9 h-9 rounded-xl flex items-center justify-center ${iconStyle}`}
-                          >
-                            <Icon size={18} />
+                          <div className="flex h-10 w-10 flex-none items-center justify-center text-2xl">
+                            {emoji}
                           </div>
 
                           <div className="flex-1">
