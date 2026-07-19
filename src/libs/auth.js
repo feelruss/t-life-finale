@@ -357,15 +357,30 @@ export async function signUpUser({
     faculty || (programme ? getFacultyFromProgramme(programme) : "");
 
   if (data.session && programme && normalizedRole === "student") {
-    const { error: profileError } = await supabase
-      .from("users")
-      .update({
-        programme,
-        faculty: resolvedFaculty || null,
-        full_name: normalizedName,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", data.user.id);
+    // Trigger may create public.users a moment after signup — retry briefly.
+    let profileError = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const { data: updatedRows, error } = await supabase
+        .from("users")
+        .update({
+          programme,
+          faculty: resolvedFaculty || null,
+          full_name: normalizedName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", data.user.id)
+        .select("id");
+
+      profileError = error;
+      if (!error && updatedRows?.length) {
+        profileError = null;
+        break;
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 150 * (attempt + 1));
+      });
+    }
 
     if (profileError) {
       console.warn("Signup programme write:", profileError.message);
@@ -373,7 +388,17 @@ export async function signUpUser({
   }
 
   if (data.session) {
-    return getCurrentSupabaseUser(data.user);
+    const profile = await getCurrentSupabaseUser(data.user);
+    return {
+      ...profile,
+      full_name: normalizedName || profile.full_name,
+      role: normalizedRole,
+      faculty: resolvedFaculty || profile.faculty,
+      // Form programme wins so Complete Profile is skipped immediately.
+      programme: programme || profile.programme || "",
+      session: data.session,
+      requiresEmailConfirmation: false,
+    };
   }
 
   return {

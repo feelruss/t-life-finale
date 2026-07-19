@@ -49,9 +49,7 @@ function getStartMinutes(value) {
     return (hours || 0) * 60 + (minutes || 0);
   }
 
-  const match = firstTime.match(
-    /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i,
-  );
+  const match = firstTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
 
   if (!match) return 0;
 
@@ -78,52 +76,108 @@ function getEventTimestamp(event) {
   const date = new Date(`${eventDate}T00:00:00`);
   const minutes = getStartMinutes(getCampusEventTime(event));
 
-  date.setHours(
-    Math.floor(minutes / 60),
-    minutes % 60,
-    0,
-    0,
-  );
+  date.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
 
   return date.getTime();
 }
 
-function mapRSVPEvent(event, rsvp) {
+/** Strip CLUB- prefix so RSVP IDs match club_events / campus_events rows. */
+export function normalizeRSVPEventId(eventId) {
+  const raw = String(eventId || "").trim();
+  if (!raw) return "";
+  return raw.replace(/^CLUB-/i, "");
+}
+
+function isInactiveEventStatus(status) {
+  return [
+    "cancelled",
+    "canceled",
+    "deleted",
+    "rejected",
+    "draft",
+  ].includes(String(status || "").trim().toLowerCase());
+}
+
+function mapCampusRSVPEvent(event, rsvp) {
   return {
     ...event,
-
-    // Keep the real campus_events ID.
     id: event.id,
     eventId: event.id,
     sourceId: event.id,
     sourceTable: "campus_events",
     eventType: "campus",
-
     rsvpId: rsvp.id,
     rsvpStatus: rsvp.status,
     registeredAt: rsvp.registered_at,
     isRSVPd: true,
-
     title: event.title || "Campus Event",
-
     host:
       event.host ||
       event.organizer ||
       event.organizer_name ||
       "Campus Event",
-
     date: getCampusEventDate(event),
     time: getCampusEventTime(event),
+    location:
+      event.location || event.venue || event.room || "Location TBC",
+    registered: Number(event.registered || 0),
+    // capacity 0 / null means "Available" in the UI — still a valid RSVP
+    capacity: Number(event.capacity || 0),
+    match_score: event.match_score || null,
+    match_breakdown: event.match_breakdown || null,
+  };
+}
 
+function mapClubRSVPEvent(event, rsvp) {
+  const club = Array.isArray(event.clubs) ? event.clubs[0] : event.clubs;
+
+  return {
+    ...event,
+    id: event.id,
+    eventId: event.id,
+    sourceId: event.id,
+    sourceTable: "club_events",
+    eventType: "club",
+    rsvpId: rsvp.id,
+    rsvpStatus: rsvp.status,
+    registeredAt: rsvp.registered_at,
+    isRSVPd: true,
+    title: event.title || "Club Event",
+    host: club?.name || event.host || "Taylor's Club",
+    date: getCampusEventDate(event),
+    time: getCampusEventTime(event),
     location:
       event.location ||
+      club?.meeting_location ||
       event.venue ||
-      event.room ||
       "Location TBC",
-
     registered: Number(event.registered || 0),
     capacity: Number(event.capacity || 0),
+    match_score: event.match_score || null,
+    match_breakdown: event.match_breakdown || null,
+    description: event.description || club?.description || "",
   };
+}
+
+function finalizeRSVPList(mapped) {
+  const todayISO = getTodayISO();
+
+  return mapped
+    .filter(Boolean)
+    .map((item) => {
+      const eventDate = getCampusEventDate(item);
+      return {
+        ...item,
+        isPast: Boolean(eventDate && eventDate < todayISO),
+        isUndated: !eventDate,
+      };
+    })
+    .sort((eventA, eventB) => {
+      const aPast = eventA.isPast ? 1 : 0;
+      const bPast = eventB.isPast ? 1 : 0;
+      if (aPast !== bPast) return aPast - bPast;
+      return getEventTimestamp(eventA) - getEventTimestamp(eventB);
+    });
 }
 
 export async function getStudentRSVP(studentId, eventId) {
@@ -135,7 +189,7 @@ export async function getStudentRSVP(studentId, eventId) {
     .from("event_rsvps")
     .select("*")
     .eq("student_id", studentId)
-    .eq("event_id", String(eventId))
+    .eq("event_id", normalizeRSVPEventId(eventId))
     .maybeSingle();
 
   if (error) {
@@ -159,6 +213,8 @@ export async function registerForEvent({
     throw new Error("Event ID is required.");
   }
 
+  const normalizedEventId = normalizeRSVPEventId(eventId);
+
   /*
    * Your table has a unique constraint on student_id + event_id.
    *
@@ -169,7 +225,7 @@ export async function registerForEvent({
     .upsert(
       {
         student_id: studentId,
-        event_id: String(eventId),
+        event_id: normalizedEventId,
         status: "registered",
         registered_at: new Date().toISOString(),
         cancelled_at: null,
@@ -193,7 +249,7 @@ export async function registerForEvent({
         detail: {
           action: "registered",
           studentId,
-          eventId: String(eventId),
+          eventId: normalizedEventId,
           eventTitle: _eventTitle || null,
         },
       }),
@@ -213,6 +269,7 @@ export async function cancelEventRSVP({
     throw new Error("Student ID and event ID are required.");
   }
 
+  const normalizedEventId = normalizeRSVPEventId(eventId);
   const cancelledAt = new Date().toISOString();
 
   const { data, error } = await supabase
@@ -223,7 +280,7 @@ export async function cancelEventRSVP({
       updated_at: cancelledAt,
     })
     .eq("student_id", studentId)
-    .eq("event_id", String(eventId))
+    .eq("event_id", normalizedEventId)
     .select()
     .single();
 
@@ -238,7 +295,7 @@ export async function cancelEventRSVP({
         detail: {
           action: "cancelled",
           studentId,
-          eventId: String(eventId),
+          eventId: normalizedEventId,
           eventTitle: _eventTitle || null,
         },
       }),
@@ -248,19 +305,15 @@ export async function cancelEventRSVP({
   return data;
 }
 
+/**
+ * Load RSVPs and hydrate from campus_events AND club_events.
+ * Capacity is irrelevant — events with capacity 0 ("Available") still appear.
+ */
 export async function getUpcomingRSVPEvents(studentId) {
   if (!studentId) {
     return [];
   }
 
-  const todayISO = getTodayISO();
-
-  /*
-   * Use the foreign-key relationship to fetch campus_events directly.
-   *
-   * event_rsvps_event_id_fkey is the relationship name created by
-   * your Supabase schema.
-   */
   const { data, error } = await supabase
     .from("event_rsvps")
     .select(
@@ -272,8 +325,7 @@ export async function getUpcomingRSVPEvents(studentId) {
         registered_at,
         cancelled_at,
         created_at,
-        updated_at,
-        campus_events!event_rsvps_event_id_fkey (*)
+        updated_at
       `,
     )
     .eq("student_id", studentId)
@@ -288,56 +340,87 @@ export async function getUpcomingRSVPEvents(studentId) {
     throw error;
   }
 
-  const upcomingEvents = (data || [])
-    .map((rsvp) => {
-      /*
-       * Depending on the generated Supabase relationship, this can
-       * be returned as an object or an array.
-       */
-      const relatedEvent = Array.isArray(rsvp.campus_events)
-        ? rsvp.campus_events[0]
-        : rsvp.campus_events;
+  const rsvps = data || [];
+  if (rsvps.length === 0) {
+    return [];
+  }
 
-      if (!relatedEvent) {
-        return null;
-      }
+  const eventIds = [
+    ...new Set(
+      rsvps
+        .map((row) => normalizeRSVPEventId(row.event_id))
+        .filter(Boolean),
+    ),
+  ];
 
-      const eventDate = getCampusEventDate(relatedEvent);
+  const [campusResult, clubResult] = await Promise.allSettled([
+    supabase.from("campus_events").select("*").in("id", eventIds),
+    supabase
+      .from("club_events")
+      .select("*, clubs(name, category, description, logo, meeting_location)")
+      .in("id", eventIds),
+  ]);
 
-      const eventStatus = String(
-        relatedEvent.status || "",
-      )
-        .trim()
-        .toLowerCase();
+  const campusById = new Map();
+  const clubById = new Map();
 
-      if (
-        [
-          "cancelled",
-          "canceled",
-          "deleted",
-          "rejected",
-          "draft",
-        ].includes(eventStatus)
-      ) {
-        return null;
-      }
+  if (campusResult.status === "fulfilled" && !campusResult.value.error) {
+    for (const row of campusResult.value.data || []) {
+      campusById.set(String(row.id), row);
+    }
+  } else if (campusResult.status === "fulfilled" && campusResult.value.error) {
+    console.warn(
+      "campus_events hydrate for RSVPs failed:",
+      campusResult.value.error.message,
+    );
+  }
 
-      const mapped = mapRSVPEvent(relatedEvent, rsvp);
-      if (!mapped) return null;
+  if (clubResult.status === "fulfilled" && !clubResult.value.error) {
+    for (const row of clubResult.value.data || []) {
+      clubById.set(String(row.id), row);
+    }
+  } else if (clubResult.status === "fulfilled" && clubResult.value.error) {
+    console.warn(
+      "club_events hydrate for RSVPs failed:",
+      clubResult.value.error.message,
+    );
+  }
 
-      // Keep dated-past events visible so demo RSVPs still show up.
-      mapped.isPast = Boolean(eventDate && eventDate < todayISO);
-      mapped.isUndated = !eventDate;
-      return mapped;
-    })
-    .filter(Boolean)
-    .sort((eventA, eventB) => {
-      // Upcoming / undated first, then past.
-      const aPast = eventA.isPast ? 1 : 0;
-      const bPast = eventB.isPast ? 1 : 0;
-      if (aPast !== bPast) return aPast - bPast;
-      return getEventTimestamp(eventA) - getEventTimestamp(eventB);
-    });
+  const mapped = rsvps.map((rsvp) => {
+    const eventId = normalizeRSVPEventId(rsvp.event_id);
+    const campusEvent = campusById.get(eventId);
+    if (campusEvent) {
+      if (isInactiveEventStatus(campusEvent.status)) return null;
+      return mapCampusRSVPEvent(campusEvent, rsvp);
+    }
 
-  return upcomingEvents;
+    const clubEvent = clubById.get(eventId);
+    if (clubEvent) {
+      if (isInactiveEventStatus(clubEvent.status)) return null;
+      return mapClubRSVPEvent(clubEvent, rsvp);
+    }
+
+    // Keep a minimal card so RSVPs never disappear when the join misses.
+    // Leave sourceTable empty so local/schedule merge can fill club vs campus.
+    return {
+      id: eventId,
+      eventId,
+      sourceId: eventId,
+      sourceTable: "",
+      eventType: "campus",
+      rsvpId: rsvp.id,
+      rsvpStatus: rsvp.status,
+      registeredAt: rsvp.registered_at,
+      isRSVPd: true,
+      title: "Registered event",
+      host: "Campus Event",
+      date: "",
+      time: "",
+      location: "Location TBC",
+      capacity: 0,
+      registered: 0,
+    };
+  });
+
+  return finalizeRSVPList(mapped);
 }

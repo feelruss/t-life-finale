@@ -389,14 +389,26 @@ export const isEventRSVPd = (eventId, userKey = 'guest') => {
 };
 
 export const toggleEventRSVP = ({ event, userKey = 'guest' }) => {
-    const canonicalEventId = String(event?.sourceEventId || event?.id || '').trim();
+    // Prefer real DB ids (sourceId) over display ids like CLUB-<uuid>.
+    const rawId = String(
+        event?.sourceEventId ||
+            event?.sourceId ||
+            event?.eventId ||
+            event?.id ||
+            '',
+    ).trim();
+    const canonicalEventId = rawId.replace(/^CLUB-/i, '');
     if (!canonicalEventId) return { status: 'error', events: getUserRSVPEvents(userKey) };
 
     const current = getUserRSVPEvents(userKey);
-    const exists = current.some((item) => String(item.eventId) === canonicalEventId);
+    const sameId = (item) => {
+        const id = String(item.eventId || '').trim().replace(/^CLUB-/i, '');
+        return id === canonicalEventId;
+    };
+    const exists = current.some(sameId);
 
     if (exists) {
-        const next = current.filter((item) => String(item.eventId) !== canonicalEventId);
+        const next = current.filter((item) => !sameId(item));
         writeJSON(getScopedStorageKey(RSVP_EVENTS_KEY, userKey), next);
         return { status: 'removed', events: next, eventId: canonicalEventId };
     }
@@ -405,12 +417,19 @@ export const toggleEventRSVP = ({ event, userKey = 'guest' }) => {
         {
             id: `RSVP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             eventId: canonicalEventId,
+            sourceTable: event?.sourceTable || null,
+            eventType: event?.eventType || null,
             title: event?.title || 'Event',
             host: event?.host || 'Campus Event',
-            date: event?.date || null,
-            time: event?.time || null,
+            date: event?.date || event?.event_date || null,
+            time: event?.time || event?.event_time || null,
             location: event?.location || null,
             category: event?.category || null,
+            match_score: event?.match_score || null,
+            capacity: Number(event?.capacity || 0),
+            registered: Number(event?.registered || 0),
+            description: event?.description || null,
+            tag: event?.tag || null,
             rsvpAt: new Date().toISOString(),
         },
         ...current,

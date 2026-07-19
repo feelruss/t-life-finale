@@ -85,6 +85,7 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState("auth-loading"); // 'auth-loading' | 'landing' | 'login' | 'complete-profile' | 'app'
   const [userRole, setUserRole] = useState("student"); // 'student' | 'admin' | 'super_admin'
   const currentScreenRef = useRef("auth-loading");
+  const currentProgrammeRef = useRef("");
   const profileApplySequenceRef = useRef(0);
   const confirmedAuthUserRef = useRef({
     id: null,
@@ -303,7 +304,12 @@ export default function App() {
       return false;
     }
 
-    const programme = String(user.programme || "").trim();
+    const metadataProgramme = String(
+      user.user_metadata?.programme || user.programme || "",
+    ).trim();
+    // Keep programme from a just-finished signup if a later auth refresh is empty.
+    const programme =
+      metadataProgramme || String(currentProgrammeRef.current || "").trim();
     const userKey = resolveUserKey(user);
     const resolvedName =
       String(user.full_name || "").trim() || resolveDisplayName(user);
@@ -324,6 +330,7 @@ export default function App() {
     setDisplayName(resolvedName);
     setCurrentEmail(String(user.email || "").trim());
     setCurrentProgramme(programme);
+    currentProgrammeRef.current = programme;
     setCurrentUserKey(userKey);
     setAiMeter(loadMeterForUser(userKey));
 
@@ -519,6 +526,7 @@ export default function App() {
         setDisplayName("Student");
         setCurrentEmail("");
         setCurrentProgramme("");
+        currentProgrammeRef.current = "";
         setCurrentUserKey("guest");
         setTimetableSyncEnabled(false);
         setTimetableSyncLoading(false);
@@ -1043,16 +1051,23 @@ export default function App() {
 
     const canonicalId = String(
       event.sourceEventId || event.sourceId || event.eventId || event.id || "",
-    ).trim();
+    )
+      .trim()
+      .replace(/^CLUB-/i, "");
+
+    const rsvpIdsNormalized = rsvpEventIds.map((id) =>
+      String(id).replace(/^CLUB-/i, ""),
+    );
 
     setSelectedEvent({
       ...event,
-      // The modal and Supabase RSVP should use the real campus_events ID.
+      // Real DB id (campus_events / club_events) — not the CLUB- display prefix.
       id: canonicalId,
+      sourceId: canonicalId,
       sourceEventId: canonicalId,
       isRSVPd:
         Boolean(event.isRSVPd) ||
-        (canonicalId ? rsvpEventIds.map(String).includes(canonicalId) : false),
+        (canonicalId ? rsvpIdsNormalized.includes(canonicalId) : false),
     });
     setShowEventDetail(true);
   };
@@ -1095,6 +1110,7 @@ export default function App() {
       setUserRole("student");
       setDisplayName("Student");
       setCurrentProgramme("");
+      currentProgrammeRef.current = "";
       setCurrentUserKey("guest");
       setTimetableSyncEnabled(false);
       setTimetableSyncLoading(false);
@@ -1126,7 +1142,9 @@ export default function App() {
         event.eventId ||
         event.id ||
         "",
-    ).trim();
+    )
+      .trim()
+      .replace(/^CLUB-/i, "");
     const meterCategory = normalizeMeterCategory(event.category || mode);
 
     setRsvpEventIds(getUserRSVPEventIds(currentUserKey));
@@ -1134,7 +1152,9 @@ export default function App() {
       if (!prev) return prev;
       const prevCanonical = String(
         prev.sourceEventId || prev.sourceId || prev.eventId || prev.id || "",
-      ).trim();
+      )
+        .trim()
+        .replace(/^CLUB-/i, "");
       if (prevCanonical !== canonicalId) {
         return prev;
       }
@@ -1143,6 +1163,25 @@ export default function App() {
         isRSVPd: result.status === "added",
       };
     });
+
+    // Always notify Schedule / Profile even if cloud sync fails (e.g. club events).
+    if (
+      (result.status === "added" || result.status === "removed") &&
+      typeof window !== "undefined"
+    ) {
+      window.dispatchEvent(
+        new CustomEvent("taylors-rsvp-updated", {
+          detail: {
+            action: result.status === "added" ? "registered" : "cancelled",
+            studentId: currentUserKey,
+            eventId: canonicalId,
+            eventTitle: event.title || null,
+            sourceTable: event.sourceTable || null,
+            localOnly: true,
+          },
+        }),
+      );
+    }
 
     // Joining / leaving an event must move Focus & Wellness (was check-in only).
     if (result.status === "added" || result.status === "removed") {
