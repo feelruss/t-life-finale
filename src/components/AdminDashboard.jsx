@@ -436,18 +436,26 @@ export default function AdminDashboard({
     weeklyTrend: [],
   });
 
-  // Emoji icons for Recent Activity
+  // Icons for audit log actions displayed in Recent Activity.
   const activityEmojis = {
-    event: {
-      create: "📅",
-      update: "📝",
-      delete: "🗑️",
+    EVENT: {
+      CREATE_EVENT: "📅",
+      UPDATE_EVENT: "📝",
+      DELETE_EVENT: "🗑️",
+      APPROVE_EVENT: "✅",
+      REJECT_EVENT: "❌",
     },
-
-    admin: {
-      create: "👤",
-      update: "🛡️",
-      delete: "🚫",
+    USER: {
+      CREATE_ADMIN: "👤",
+      UPDATE_ADMIN: "🛡️",
+      DELETE_ADMIN: "🚫",
+      CHANGE_ROLE: "🔐",
+    },
+    SYSTEM: {
+      LOGIN: "🔓",
+      LOGOUT: "🔒",
+      GENERATE_REPORT: "📊",
+      RUN_AI_ANALYSIS: "🤖",
     },
   };
 
@@ -1082,7 +1090,7 @@ export default function AdminDashboard({
     }
   };
 
-  // New: Fetch recent activity logs from Supabase
+  // Fetch the latest administrative audit records for Recent Activity.
   const fetchRecentActivity = async () => {
     if (!hasSupabaseConfig) {
       setRecentActivities([]);
@@ -1090,63 +1098,77 @@ export default function AdminDashboard({
     }
 
     if (!loggedInAdmin.id) {
-      console.error(
-        "Cannot load activity logs: logged-in admin ID is missing.",
-      );
+      console.error("Cannot load audit logs: logged-in admin ID is missing.");
       setRecentActivities([]);
       return;
     }
 
     try {
-      let query = supabase.from("activity_logs").select("*");
+      let query = supabase
+        .from("audit_logs")
+        .select(
+          "id, user_id, action, entity_type, entity_id, old_values, new_values, created_at",
+        );
 
       const isSuperAdmin = loggedInAdmin.dbRole === "super_admin";
 
-      // Non-super-admin users only see activities performed by themselves.
+      // Event Managers and Analytics Viewers only see their own audit records.
       if (!isSuperAdmin) {
-        query = query.eq("performed_by_id", loggedInAdmin.id);
+        query = query.eq("user_id", loggedInAdmin.id);
       }
 
       const { data, error } = await query
         .order("created_at", { ascending: false })
         .limit(5);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
+
+      const actionLabels = {
+        CREATE_EVENT: "Event Created",
+        UPDATE_EVENT: "Event Updated",
+        DELETE_EVENT: "Event Deleted",
+        APPROVE_EVENT: "Event Approved",
+        REJECT_EVENT: "Event Rejected",
+        CREATE_ADMIN: "Admin Account Created",
+        UPDATE_ADMIN: "Admin Account Updated",
+        DELETE_ADMIN: "Admin Account Deleted",
+        CHANGE_ROLE: "Admin Role Changed",
+        GENERATE_REPORT: "Report Generated",
+        RUN_AI_ANALYSIS: "AI Analysis Run",
+        LOGIN: "Administrator Signed In",
+        LOGOUT: "Administrator Signed Out",
+      };
 
       const formattedActivities = (data || []).map((log) => {
-        const isAdminActivity = log.entity_type === "admin";
-        const entityLabel = isAdminActivity ? "Admin Account" : "Event";
+        const values = log.new_values || log.old_values || {};
+        const entityType = String(log.entity_type || "SYSTEM").toUpperCase();
+        const action = String(log.action || "UNKNOWN").toUpperCase();
 
-        let actionLabel = `${entityLabel} Activity`;
+        const fallbackAction = action
+          .toLowerCase()
+          .replaceAll("_", " ")
+          .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-        if (log.action === "create") {
-          actionLabel = `${entityLabel} Created`;
-        } else if (log.action === "update") {
-          actionLabel = `${entityLabel} Updated`;
-        } else if (log.action === "delete") {
-          actionLabel = `${entityLabel} Deleted`;
+        let detail = `Record ${log.entity_id || "not available"}`;
+
+        if (entityType === "EVENT") {
+          detail = `${values.title || "Unknown event"} • ${
+            values.host || "Unknown host"
+          }`;
+        } else if (entityType === "USER") {
+          detail = `${values.full_name || values.name || "Unknown admin"} • ${
+            values.email || "No email"
+          }`;
+        } else if (values.description) {
+          detail = values.description;
         }
 
         return {
           id: log.id,
-          type: log.action || "create",
-          action: actionLabel,
-
-          detail: isAdminActivity
-            ? `${log.event_title || "Unknown admin"} • ${
-                log.admin_email || "No email"
-              }`
-            : `${log.event_title || "Unknown event"} • ${
-                log.event_host || "Unknown host"
-              }`,
-
-          performedBy:
-            log.performed_by_name ||
-            log.performed_by_role ||
-            "Unknown administrator",
-
+          actionCode: action,
+          entityType,
+          action: actionLabels[action] || fallbackAction,
+          detail,
           time: log.created_at
             ? new Date(log.created_at).toLocaleString("en-US", {
                 month: "short",
@@ -1160,7 +1182,7 @@ export default function AdminDashboard({
 
       setRecentActivities(formattedActivities);
     } catch (err) {
-      console.error("Failed to fetch recent activities:", err);
+      console.error("Failed to fetch audit logs:", err);
       setRecentActivities([]);
     }
   };
@@ -1293,19 +1315,38 @@ export default function AdminDashboard({
     );
 
     // New: After saving, reload events to ensure the list is up-to-date and sorted
+    const previousEvent =
+      eventModalMode === "edit"
+        ? adminEvents.find((event) => event.id === savedEvent.id)
+        : null;
+
     const { error: activityError } = await supabase
-      .from("activity_logs")
+      .from("audit_logs")
       .insert({
-        entity_type: "event",
-        event_id: savedEvent.id,
-        event_title: savedEvent.title,
-        event_host: savedEvent.host,
-        admin_id: null,
-        admin_email: null,
-        action: eventModalMode === "create" ? "create" : "update",
-        performed_by_id: loggedInAdmin.id,
-        performed_by_name: loggedInAdmin.name,
-        performed_by_role: loggedInAdmin.dbRole,
+        user_id: loggedInAdmin.id,
+        action: eventModalMode === "create" ? "CREATE_EVENT" : "UPDATE_EVENT",
+        entity_type: "EVENT",
+        entity_id: savedEvent.id,
+        old_values: previousEvent
+          ? {
+              title: previousEvent.title,
+              host: previousEvent.host,
+              date: previousEvent.date,
+              time: previousEvent.time,
+              location: previousEvent.location,
+              category: previousEvent.category,
+              capacity: previousEvent.capacity,
+            }
+          : null,
+        new_values: {
+          title: savedEvent.title,
+          host: savedEvent.host,
+          date: savedEvent.date,
+          time: savedEvent.time,
+          location: savedEvent.location,
+          category: savedEvent.category,
+          capacity: savedEvent.capacity,
+        },
       });
 
     if (activityError) {
@@ -1335,18 +1376,22 @@ export default function AdminDashboard({
 
       // 2. Insert the activity log while the event still exists
       const { error: activityError } = await supabase
-        .from("activity_logs")
+        .from("audit_logs")
         .insert({
-          entity_type: "event",
-          event_id: eventToDelete.id,
-          event_title: eventToDelete.title,
-          event_host: eventToDelete.host,
-          admin_id: null,
-          admin_email: null,
-          action: "delete",
-          performed_by_id: loggedInAdmin.id,
-          performed_by_name: loggedInAdmin.name,
-          performed_by_role: loggedInAdmin.dbRole,
+          user_id: loggedInAdmin.id,
+          action: "DELETE_EVENT",
+          entity_type: "EVENT",
+          entity_id: eventToDelete.id,
+          old_values: {
+            title: eventToDelete.title,
+            host: eventToDelete.host,
+            date: eventToDelete.date,
+            time: eventToDelete.time,
+            location: eventToDelete.location,
+            category: eventToDelete.category,
+            capacity: eventToDelete.capacity,
+          },
+          new_values: null,
         });
 
       if (activityError) {
@@ -1431,32 +1476,30 @@ export default function AdminDashboard({
         faculty,
       });
 
-      // Save the account creation inside activity_logs so it appears in the Recent Activity section.
+      // Record the account creation in audit_logs for the Recent Activity section.
+      const createdAdminId = createdAdmin?.id || createdAdmin?.user?.id || null;
+      const createdAdminEmail =
+        createdAdmin?.email || createdAdmin?.user?.email || email;
+      const createdAdminName =
+        createdAdmin?.full_name ||
+        createdAdmin?.fullName ||
+        createdAdmin?.user?.user_metadata?.full_name ||
+        fullName;
+
       const { error: activityError } = await supabase
-        .from("activity_logs")
+        .from("audit_logs")
         .insert({
-          entity_type: "admin",
-
-          admin_id: createdAdmin?.id || createdAdmin?.user?.id || null,
-
-          admin_email:
-            createdAdmin?.email || createdAdmin?.user?.email || email,
-
-          event_id: null,
-
-          // Your existing Recent Activity formatter uses event_title as the display name for admin activities.
-          event_title:
-            createdAdmin?.full_name ||
-            createdAdmin?.fullName ||
-            createdAdmin?.user?.user_metadata?.full_name ||
-            fullName,
-
-          event_host: null,
-          action: "create",
-
-          performed_by_id: loggedInAdmin.id,
-          performed_by_name: loggedInAdmin.name,
-          performed_by_role: loggedInAdmin.dbRole,
+          user_id: loggedInAdmin.id,
+          action: "CREATE_ADMIN",
+          entity_type: "USER",
+          entity_id: createdAdminId,
+          old_values: null,
+          new_values: {
+            full_name: createdAdminName,
+            email: createdAdminEmail,
+            role: newUser.role,
+            faculty,
+          },
         });
 
       if (activityError) {
@@ -1776,7 +1819,7 @@ export default function AdminDashboard({
 
                       return (
                         <div
-                          key={i}
+                          key={evt.id}
                           className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]"
                         >
                           <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1854,18 +1897,13 @@ export default function AdminDashboard({
                       No recent activity yet.
                     </p>
                   ) : (
-                    recentActivities.map((act, i) => {
-                      const type = act.type || "create";
-
-                      const entity = act.action?.startsWith("Admin")
-                        ? "admin"
-                        : "event";
-
-                      const emoji = activityEmojis[entity]?.[type] || "📌";
+                    recentActivities.map((act) => {
+                      const emoji =
+                        activityEmojis[act.entityType]?.[act.actionCode] || "📌";
 
                       return (
                         <div
-                          key={i}
+                          key={act.id}
                           className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.02]"
                         >
                           <div className="flex h-10 w-10 flex-none items-center justify-center text-2xl">
