@@ -3,20 +3,16 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Lock,
-  User,
   Shield,
   ArrowRight,
   AlertCircle,
   Mail,
-  BookOpen,
   Eye,
   EyeOff,
   Key,
 } from "lucide-react";
 import {
   signInWithPassword,
-  signUpStudent,
-  getFacultyFromProgramme,
   sendPasswordReset,
   updatePassword,
 } from "../libs/auth";
@@ -24,32 +20,12 @@ import {
 const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => {
   const [authView, setAuthView] = useState(
     passwordRecovery ? "reset" : "signin",
-  ); // 'signin' | 'signup' | 'forgot' | 'reset'
+  ); // 'signin' | 'forgot' | 'reset'
 
   // Sign In State
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-
-  // Sign Up State
-  const [regName, setRegName] = useState("");
-  const [regEmail, setRegEmail] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regProgramme, setRegProgramme] = useState("");
-  const [showRegPassword, setShowRegPassword] = useState(false);
-
-  const programmes = [
-    "Bachelor of Computer Science (Hons.)",
-    "Bachelor of Software Engineering (Hons.)",
-    "Bachelor of Business (Hons.)",
-    "Bachelor of Accounting (Hons.)",
-    "Bachelor of Psychology (Hons.)",
-    "Foundation in Arts",
-    "Foundation in Business",
-    "Diploma in Communication",
-    "Diploma in Information Technology",
-    "Diploma in Hospitality Management",
-  ];
 
   const [forgotEmail, setForgotEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -91,70 +67,6 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
       setError(err.message || "Invalid campus email or password.");
     } finally {
       setIsSigningIn(false);
-    }
-  };
-
-  const handleSignUp = async (e) => {
-    e.preventDefault();
-    setError("");
-    setSuccessMsg("");
-
-    const normalizedEmail = regEmail.trim().toLowerCase();
-
-    if (!normalizedEmail.endsWith("@sd.taylors.edu.my")) {
-      setError(
-        "Student registration requires an @sd.taylors.edu.my email address.",
-      );
-      return;
-    }
-
-    if (regPassword.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
-
-    if (!regProgramme) {
-      setError("Please select your programme.");
-      return;
-    }
-
-    try {
-      const faculty = getFacultyFromProgramme(regProgramme);
-
-      if (!faculty) {
-        setError("The selected programme does not have a faculty mapping.");
-        return;
-      }
-
-      const result = await signUpStudent({
-        fullName: regName,
-        email: normalizedEmail,
-        password: regPassword,
-        programme: regProgramme,
-        faculty,
-      });
-
-      if (result.session) {
-        const user = {
-          ...result.user,
-          full_name: regName.trim(),
-          role: "student",
-          programme: regProgramme,
-          faculty,
-        };
-        onLogin({ type: "student", user });
-        return;
-      }
-
-      setSuccessMsg(
-        "Account created. Check your email to confirm the account before signing in.",
-      );
-      setAuthView("signin");
-      setEmail(normalizedEmail);
-      setPassword("");
-    } catch (err) {
-      console.error("Supabase sign-up failed:", err);
-      setError(err.message || "Unable to create the account.");
     }
   };
 
@@ -235,33 +147,19 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
           <span className="text-4xl font-serif font-bold text-white">T</span>
         </motion.div>
 
-        {/* Tabs */}
-        {(authView === "signin" || authView === "signup") && (
+        {/* Sign-in heading */}
+        {authView === "signin" && (
           <motion.div
             initial={{ y: 20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            className="flex bg-white/5 p-1 rounded-xl mb-6 w-full max-w-[240px]"
+            className="mb-6 text-center"
           >
-            <button
-              onClick={() => {
-                setAuthView("signin");
-                setError("");
-                setSuccessMsg("");
-              }}
-              className={`flex-1 py-1.5 text-xs font-inter font-bold rounded-lg transition-colors ${authView === "signin" ? "bg-taylor-red text-white shadow-lg" : "text-gray-400 hover:text-white"}`}
-            >
+            <h1 className="font-outfit text-xl font-bold text-white">
               Sign In
-            </button>
-            <button
-              onClick={() => {
-                setAuthView("signup");
-                setError("");
-                setSuccessMsg("");
-              }}
-              className={`flex-1 py-1.5 text-xs font-inter font-bold rounded-lg transition-colors ${authView === "signup" ? "bg-taylor-red text-white shadow-lg" : "text-gray-400 hover:text-white"}`}
-            >
-              Sign Up
-            </button>
+            </h1>
+            <p className="mt-1 text-xs font-inter text-gray-500">
+              Access your Taylor&apos;s University account
+            </p>
           </motion.div>
         )}
 
@@ -381,136 +279,8 @@ const LoginPage = ({ onLogin, passwordRecovery = false, onPasswordUpdated }) => 
 
               <p className="mt-4 text-center text-[11px] font-inter text-gray-500 leading-relaxed">
                 University platform — sign in with your{" "}
-                <span className="text-gray-300">@taylors.edu.my</span> or{" "}
-                <span className="text-gray-300">@sd.taylors.edu.my</span> email.
+                <span className="text-gray-300">Taylor's University</span> email.
               </p>
-            </motion.form>
-          ) : authView === "signup" ? (
-            <motion.form
-              key="signup"
-              initial={{ x: 20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 20, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="w-full space-y-4 mb-8"
-              onSubmit={handleSignUp}
-            >
-              <div className="space-y-1">
-                <label className="text-[10px] font-inter uppercase tracking-wider text-gray-400 ml-1 block">
-                  Full Name *
-                </label>
-                <div className="relative">
-                  <User
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-                    size={16}
-                  />
-                  <input
-                    type="text"
-                    placeholder="e.g. John Doe"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-taylor-red/50 text-white"
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-inter uppercase tracking-wider text-gray-400 ml-1 block">
-                  Campus Email *
-                </label>
-                <div className="relative">
-                  <Mail
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-                    size={16}
-                  />
-                  <input
-                    type="email"
-                    placeholder="john@sd.taylors.edu.my"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-taylor-red/50 text-white"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-inter uppercase tracking-wider text-gray-400 ml-1 block">
-                  Programme *
-                </label>
-                <div className="relative">
-                  <BookOpen
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-                    size={16}
-                  />
-                  <select
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-taylor-red/50 text-white appearance-none"
-                    style={{
-                      color: "#ffffff",
-                      backgroundColor: "rgba(255,255,255,0.06)",
-                    }}
-                    value={regProgramme}
-                    onChange={(e) => setRegProgramme(e.target.value)}
-                    required
-                  >
-                    <option
-                      value=""
-                      disabled
-                      style={{
-                        color: "#9ca3af",
-                        backgroundColor: "rgba(15, 23, 42, 0.95)",
-                      }}
-                    >
-                      Select your programme
-                    </option>
-                    {programmes.map((programme) => (
-                      <option
-                        key={programme}
-                        value={programme}
-                        style={{
-                          color: "#ffffff",
-                          backgroundColor: "rgba(15, 23, 42, 0.95)",
-                        }}
-                      >
-                        {programme}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-inter uppercase tracking-wider text-gray-400 ml-1 block">
-                  Password *
-                </label>
-                <div className="relative">
-                  <Lock
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"
-                    size={16}
-                  />
-                  <input
-                    type={showRegPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-12 text-sm focus:outline-none focus:border-taylor-red/50 text-white"
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    required
-                    minLength={8}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowRegPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition"
-                  >
-                    {showRegPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 mt-4 bg-white hover:bg-gray-200 text-black rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-colors shadow-glow"
-              >
-                Create Student Account
-              </button>
             </motion.form>
           ) : authView === "reset" ? (
             <motion.form

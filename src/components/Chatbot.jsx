@@ -57,7 +57,7 @@ function buildLocalReply(question, { mode, displayName }) {
   }
 
   if (/login|google|sign in|password/.test(q)) {
-    return `T-Life is a university platform — sign in with your @taylors.edu.my or @sd.taylors.edu.my email and password. Use Sign Up if you need a new student account.`;
+    return `T-Life is a university platform — sign in with your @taylors.edu.my or @sd.taylors.edu.my email and password. New student accounts must be created by an authorized administrator.`;
   }
 
   if (/hello|hi\b|hey|good morning|good afternoon/.test(q)) {
