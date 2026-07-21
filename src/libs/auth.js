@@ -1,5 +1,6 @@
 // This is the src/libs/auth.js file
 import { supabase } from "../libs/supabase";
+import { findFacultyId, findProgrammeId, mapNormalizedUser } from "../services/normalizedSchemaService";
 
 const VALID_ROLES = new Set([
   "student",
@@ -101,8 +102,11 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
         full_name,
         email,
         role,
-        faculty,
-        programme,
+        faculty_id,
+        programme_id,
+        faculties(name),
+        programmes(name),
+        user_interests(interests(name)),
         avatar,
         last_login,
         last_active_at,
@@ -130,18 +134,19 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
   }
 
   const metadata = authUser.user_metadata || {};
-  const role = normalizeRole(profile.role);
+  const normalizedProfile = mapNormalizedUser(profile);
+  const role = normalizeRole(normalizedProfile.role);
 
   return {
     ...authUser,
-    ...profile,
+    ...normalizedProfile,
 
     id: authUser.id,
 
-    email: profile.email || authUser.email || "",
+    email: normalizedProfile.email || authUser.email || "",
 
     full_name:
-      profile.full_name ||
+      normalizedProfile.full_name ||
       metadata.full_name ||
       metadata.name ||
       authUser.email?.split("@")[0] ||
@@ -149,13 +154,13 @@ export async function getCurrentSupabaseUser(sessionUser = null) {
 
     role,
 
-    faculty: profile.faculty || "",
+    faculty: normalizedProfile.faculty || "",
 
-    programme: profile.programme || "",
+    programme: normalizedProfile.programme || "",
 
     avatar:
-      profile.avatar ||
-      (profile.full_name || metadata.full_name || authUser.email || "U")
+      normalizedProfile.avatar ||
+      (normalizedProfile.full_name || metadata.full_name || authUser.email || "U")
         .charAt(0)
         .toUpperCase(),
 
@@ -217,13 +222,18 @@ async function saveSignupProfile({
   faculty,
   programme,
 }) {
+  const [facultyId, programmeId] = await Promise.all([
+    findFacultyId(faculty),
+    findProgrammeId(programme),
+  ]);
+
   const profile = {
     id: userId,
     full_name: fullName,
     email,
     role,
-    faculty: faculty || null,
-    programme: programme || null,
+    faculty_id: facultyId,
+    programme_id: programmeId,
     updated_at: new Date().toISOString(),
   };
 
@@ -389,6 +399,24 @@ export async function signUpAdmin({
     faculty,
     programme: "",
   });
+}
+
+export async function completeUserProfile({ programme }) {
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  if (!user?.id) throw new Error("Please sign in before completing your profile.");
+
+  const programmeId = await findProgrammeId(programme);
+  const facultyName = getFacultyFromProgramme(programme);
+  const facultyId = await findFacultyId(facultyName);
+  if (!programmeId) throw new Error("The selected programme could not be found.");
+
+  const { error } = await supabase
+    .from("users")
+    .update({ programme_id: programmeId, faculty_id: facultyId, updated_at: new Date().toISOString() })
+    .eq("id", user.id);
+  if (error) throw error;
+  return getCurrentSupabaseUser(user);
 }
 
 export async function sendPasswordReset(email) {

@@ -7,7 +7,7 @@ import { supabase } from "../libs/supabase";
 export async function recordEventAttendance({
   studentId,
   eventId,
-  attendanceType = "check_in",
+  attendanceType = "check-in",
 }) {
   if (!studentId || studentId === "guest" || !eventId) {
     return { saved: false, reason: "missing-ids" };
@@ -18,8 +18,8 @@ export async function recordEventAttendance({
     .insert({
       student_id: studentId,
       event_id: eventId,
-      attendance_type: attendanceType,
-      checked_in_at: new Date().toISOString(),
+      attendance_type: attendanceType === "check_in" ? "check-in" : attendanceType,
+      attended_at: new Date().toISOString(),
     })
     .select("id")
     .maybeSingle();

@@ -28,6 +28,11 @@ import { buildBaselineMatchScores } from "../services/eventRecommendationService
 import { createAdminAccount, getAdminUsers } from "../services/adminService";
 import AdminAIWellnessWidget from "./AdminAIWellnessWidget";
 import {
+  mapNormalizedCampusEvent,
+  NORMALIZED_EVENT_SELECT,
+  syncEventTopicTag,
+} from "../services/normalizedSchemaService";
+import {
   calculateBurnoutScores,
   getMondayDate,
 } from "../services/burnoutRiskService";
@@ -116,63 +121,30 @@ const MOCK_FACULTY_STUDENTS = {
   Hospitality: 0,
 };
 
-const toSupabaseRow = (event, creator = null) => {
-  const baseline = buildBaselineMatchScores(event);
+const toSupabaseRow = (event, creator = null) => ({
+  title: event.title,
+  host: event.host,
+  host_name: event.host,
+  event_date: event.date || null,
+  event_time: event.time || null,
+  location: event.location || null,
+  zone: event.zone || null,
+  category: event.category || "focus",
+  capacity: Number(event.capacity) || 0,
+  description: event.description || null,
+  emoji: event.emoji || "📚",
+  ...(creator?.id ? { created_by_id: creator.id } : {}),
+});
 
+const fromSupabaseEvent = (row) => {
+  const mapped = mapNormalizedCampusEvent(row);
   return {
-    title: event.title,
-    host: event.host,
-    event_date: event.date || null,
-    event_time: event.time || null,
-    location: event.location || null,
-    zone: event.zone || null,
-    category: event.category || "focus",
-    capacity: Number(event.capacity) || 0,
-    registered: Number(event.registered) || 0,
-    description: event.description || null,
-    tag: event.tag || "Technology",
-    emoji: event.emoji || "📚",
-    // Always recalculate so retagging Topic/Mode updates student %s.
-    match_score: baseline.match_score,
-    match_breakdown: baseline.match_breakdown,
-    ...(creator && {
-      created_by_id: creator.id,
-      created_by_name: creator.name,
-      created_by_role: creator.role,
-    }),
+    ...mapped,
+    createdById: row.created_by_id || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || row.created_at || "",
   };
 };
-
-const fromSupabaseEvent = (row) => ({
-  id: row.id,
-  title: row.title,
-  host: row.host,
-  time: row.event_time || "",
-  date: row.event_date || "",
-  location: row.location || "",
-  zone: row.zone || "",
-  category: row.category || "focus",
-  match_score: row.match_score || "—",
-  match_breakdown: row.match_breakdown || {},
-  friends_attending: row.friends_attending || 0,
-  friendNames: row.friend_names || [],
-  description: row.description || "",
-  icon: row.icon || "CalendarIcon",
-  accent: row.accent || "#E31837",
-  tag: row.tag || "General",
-  emoji: row.emoji || "📚",
-  tgcTags: row.tgc_tags || [],
-  shineTags: row.shine_tags || [],
-  capacity: row.capacity || 0,
-  registered: row.registered || 0,
-  isRSVPd: row.is_rsvpd || false,
-  accessibility: row.accessibility || [],
-  createdById: row.created_by_id || "",
-  createdByName: row.created_by_name || "",
-  createdByRole: row.created_by_role || "",
-  createdAt: row.created_at || "",
-  updatedAt: row.updated_at || row.created_at || "",
-});
 
 const sortNewestFirst = (list) =>
   [...list].sort(
@@ -656,7 +628,7 @@ export default function AdminDashboard({
       // 1. Load every student from public.users
       const { data: studentRows, error: studentsError } = await supabase
         .from("users")
-        .select("id, faculty, focus_mode")
+        .select("id, focus_mode, faculties(name)")
         .eq("role", "student");
 
       if (studentsError) {
@@ -690,7 +662,8 @@ export default function AdminDashboard({
       // 3. Create student and faculty lookup maps
       const studentMap = new Map(
         students.map((student) => {
-          const faculty = String(student.faculty || "").trim() || "Unassigned";
+          const facultyRelation = Array.isArray(student.faculties) ? student.faculties[0] : student.faculties;
+          const faculty = String(facultyRelation?.name || "").trim() || "Unassigned";
 
           return [
             String(student.id),
@@ -1033,14 +1006,14 @@ export default function AdminDashboard({
       const { data, error } = await supabase
         .from("users")
         .select(
-          "id, full_name, email, role, faculty, avatar, last_login, created_at",
+          "id, full_name, email, role, faculty_id, faculties(name), avatar, last_login, created_at",
         )
         .in("role", ["admin", "super_admin", "analytics_viewer"])
         .order("created_at", { ascending: true });
 
       if (error) throw error;
 
-      setSupabaseAdminUsers(data || []);
+      setSupabaseAdminUsers((data || []).map((admin) => ({ ...admin, faculty: (Array.isArray(admin.faculties) ? admin.faculties[0] : admin.faculties)?.name || "" })));
     } catch (err) {
       console.error("Failed to fetch admin users:", err.message);
       setSupabaseAdminUsers([]);
@@ -1066,7 +1039,7 @@ export default function AdminDashboard({
     try {
       const { data, error } = await supabase
         .from("campus_events")
-        .select("*")
+        .select(NORMALIZED_EVENT_SELECT)
         .order("updated_at", { ascending: false });
 
       if (error) throw error;
@@ -1304,6 +1277,11 @@ export default function AdminDashboard({
     }
 
     const savedEvent = fromSupabaseEvent(data);
+    try {
+      await syncEventTopicTag(savedEvent.id, eventDraft.tag);
+    } catch (tagError) {
+      console.error("Event saved, but its normalized topic tag failed:", tagError);
+    }
 
     // New: Update the adminEvents state with the saved event, ensuring it's sorted by newest first
     setAdminEvents((prev) =>

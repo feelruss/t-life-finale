@@ -111,7 +111,8 @@ export async function getAdminUsers() {
         full_name,
         email,
         role,
-        faculty,
+        faculty_id,
+        faculties(name),
         avatar,
         last_login,
         created_at
@@ -130,5 +131,8 @@ export async function getAdminUsers() {
     throw error;
   }
 
-  return data || [];
+  return (data || []).map((admin) => ({
+    ...admin,
+    faculty: (Array.isArray(admin.faculties) ? admin.faculties[0] : admin.faculties)?.name || "",
+  }));
 }

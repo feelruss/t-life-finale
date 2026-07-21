@@ -31,7 +31,7 @@ function mapScheduleRow(row) {
   return {
     id: row.id,
     studentId: row.student_id,
-    programme: row.programme,
+    programme: row.programmes?.name || row.programme || "",
     semester: row.semester,
     academicYear: row.academic_year,
     moduleCode: row.module_code,
@@ -63,7 +63,7 @@ export async function getStudentSchedule({ studentId = null, programme = "" } = 
   if (studentId) {
     const { data: personalRows, error: personalError } = await supabase
       .from("student_schedule")
-      .select("*")
+      .select("*, programmes(name)")
       .eq("student_id", studentId)
       .order("start_time", { ascending: true });
 
@@ -87,12 +87,22 @@ export async function getStudentSchedule({ studentId = null, programme = "" } = 
   const programmeCandidates = getProgrammeCandidates(programme);
   if (programmeCandidates.length === 0) return [];
 
-  // Fall back to shared mock rows for the user's programme.
+  const normalizedProgramme = programmeCandidates
+    .map((value) => value.replace("(Honours)", "(Hons.)"))[0];
+  const { data: programmeRow, error: programmeError } = await supabase
+    .from("programmes")
+    .select("id")
+    .eq("name", normalizedProgramme)
+    .maybeSingle();
+  if (programmeError) throw programmeError;
+  if (!programmeRow?.id) return [];
+
+  // Fall back to shared rows assigned to the normalized programme.
   const { data, error } = await supabase
     .from("student_schedule")
-    .select("*")
+    .select("*, programmes(name)")
     .is("student_id", null)
-    .in("programme", programmeCandidates)
+    .eq("programme_id", programmeRow.id)
     .order("start_time", { ascending: true });
 
   if (error) {
