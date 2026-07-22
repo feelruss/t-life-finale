@@ -1,194 +1,419 @@
+import { supabase } from "../libs/supabase";
+
 /**
- * Simple campus event recommendation engine.
+ * Hybrid campus-event recommendation engine.
  *
- * Uses Interested / Not interested feedback + event metadata to:
- * 1) Rank which events to show
- * 2) Compute personal Interest / Schedule / Proximity / Social % for the UI
+ * Hybrid components:
+ * 1. Content-based filtering: compares the current student's interests,
+ *    programme, faculty and mode with event metadata.
+ * 2. Collaborative filtering: scores events from attendance and RSVP behaviour
+ *    of students who have similar interests and interaction histories.
+ * 3. Constraint filtering: penalises timetable clashes.
  *
- * Formula (display match %):
- *   overall = 0.40*Interest + 0.30*Schedule + 0.20*Proximity + 0.10*Social
+ * Final score:
+ *   established user = 60% content + 40% collaborative
+ *   cold-start user  = 100% content
  */
 
-const TAG_INTEREST_BASE = {
-  Technology: 86,
-  Career: 84,
-  Wellness: 88,
-  Social: 82,
-  Creative: 83,
-  Academic: 85,
-};
-
 const MAX_RECOMMENDED = 6;
+const ATTENDANCE_WEIGHT = 5;
+const RSVP_WEIGHT = 3;
+const VIEW_WEIGHT = 1;
 
 function clamp(n, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(Number(n) || 0)));
 }
 
-function parseMatchNumber(value) {
-  const n = Number(String(value ?? "0").replace("%", ""));
-  return Number.isFinite(n) ? n : 0;
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
-/**
- * Baseline match for newly created admin events (stored on campus_events).
- */
-export function buildBaselineMatchScores(event = {}) {
-  const tag = String(event.tag || "Technology");
-  const category = String(event.category || "focus").toLowerCase();
-  const hasZone = Boolean(String(event.zone || "").trim());
-  const hasLocation = Boolean(String(event.location || "").trim());
-  const capacity = Number(event.capacity) || 0;
-
-  const interest = TAG_INTEREST_BASE[tag] ?? 80;
-  const schedule = category === "balance" ? 88 : 84;
-  const proximity = hasZone || hasLocation ? 82 : 68;
-  const social =
-    capacity >= 80 ? 90 : capacity >= 40 ? 78 : capacity > 0 ? 70 : 74;
-
-  const overall = clamp(
-    interest * 0.4 + schedule * 0.3 + proximity * 0.2 + social * 0.1,
+function tokenize(value) {
+  return new Set(
+    normalizeText(value)
+      .split(/[^a-z0-9]+/i)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 2),
   );
-
-  return {
-    match_score: `${overall}%`,
-    match_breakdown: {
-      interest: clamp(interest),
-      schedule: clamp(schedule),
-      proximity: clamp(proximity),
-      social: clamp(social),
-    },
-  };
 }
 
-function collectAffinity(events, ids) {
-  const idSet = new Set((ids || []).map(String));
-  const seeds = (events || []).filter((e) => idSet.has(String(e.id)));
-  const tags = {};
-  const hosts = {};
-  const categories = {};
+function eventTokens(event = {}) {
+  return tokenize(
+    [
+      event.title,
+      event.description,
+      event.category,
+      event.tag,
+      ...(event.tgcTags || []),
+      ...(event.shineTags || []),
+      event.host,
+    ].join(" "),
+  );
+}
 
-  seeds.forEach((seed) => {
-    if (seed.tag) tags[seed.tag] = (tags[seed.tag] || 0) + 1;
-    if (seed.host) hosts[seed.host] = (hosts[seed.host] || 0) + 1;
-    const cat = String(seed.category || "").toLowerCase();
-    if (cat) categories[cat] = (categories[cat] || 0) + 1;
+function overlapRatio(left = new Set(), right = new Set()) {
+  if (!left.size || !right.size) return 0;
+  let overlap = 0;
+  left.forEach((value) => {
+    if (right.has(value)) overlap += 1;
+  });
+  return overlap / Math.max(1, left.size);
+}
+
+function jaccard(left = new Set(), right = new Set()) {
+  if (!left.size && !right.size) return 0;
+  let intersection = 0;
+  const union = new Set([...left, ...right]);
+  left.forEach((value) => {
+    if (right.has(value)) intersection += 1;
+  });
+  return intersection / Math.max(1, union.size);
+}
+
+function firstRelation(value) {
+  return (Array.isArray(value) ? value[0] : value) || null;
+}
+
+function relationName(value) {
+  return firstRelation(value)?.name || "";
+}
+
+function getRowUserId(row = {}) {
+  return String(row.student_id || "");
+}
+
+function getRowEventId(row = {}) {
+  return String(row.event_id || row.entity_id || "");
+}
+
+function normalizeTimeToMinutes(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = String(match[3] || "").toUpperCase();
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return hour * 60 + minute;
+}
+
+function parseEventRange(event = {}) {
+  const text = String(event.time || event.event_time || "");
+  const parts = text.split(/\s*(?:-|–|to)\s*/i);
+  const start = normalizeTimeToMinutes(parts[0]);
+  const end = normalizeTimeToMinutes(parts[1]);
+  return { start, end: end ?? (start == null ? null : start + 60) };
+}
+
+function eventDayName(event = {}) {
+  const rawDate = event.date || event.event_date;
+  if (!rawDate) return "";
+  const date = new Date(`${String(rawDate).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+}
+
+function hasTimetableConflict(event, scheduleRows = []) {
+  const day = eventDayName(event);
+  const range = parseEventRange(event);
+  if (!day || range.start == null || range.end == null) return false;
+
+  return scheduleRows.some((row) => {
+    if (normalizeText(row.day_of_week) !== day) return false;
+    const classStart = normalizeTimeToMinutes(row.start_time);
+    const classEnd = normalizeTimeToMinutes(row.end_time);
+    if (classStart == null || classEnd == null) return false;
+    return range.start < classEnd && range.end > classStart;
+  });
+}
+
+function buildInteractionMap(rows = [], weight = 1) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const userId = getRowUserId(row);
+    const eventId = getRowEventId(row);
+    if (!userId || !eventId) return;
+    if (!map.has(userId)) map.set(userId, new Map());
+    const userEvents = map.get(userId);
+    userEvents.set(eventId, (userEvents.get(eventId) || 0) + weight);
+  });
+  return map;
+}
+
+function mergeInteractionMaps(...maps) {
+  const merged = new Map();
+  maps.forEach((source) => {
+    source.forEach((eventMap, userId) => {
+      if (!merged.has(userId)) merged.set(userId, new Map());
+      const target = merged.get(userId);
+      eventMap.forEach((weight, eventId) => {
+        target.set(eventId, (target.get(eventId) || 0) + weight);
+      });
+    });
+  });
+  return merged;
+}
+
+function interactionSimilarity(left = new Map(), right = new Map()) {
+  if (!left.size || !right.size) return 0;
+  const leftEvents = new Set(left.keys());
+  const rightEvents = new Set(right.keys());
+  return jaccard(leftEvents, rightEvents);
+}
+
+function buildCollaborativeScores({
+  currentUserId,
+  users = [],
+  interactionMap = new Map(),
+}) {
+  const currentUser = users.find((user) => String(user.id) === String(currentUserId));
+  const currentInterests = new Set(currentUser?.interests || []);
+  const currentInteractions = interactionMap.get(String(currentUserId)) || new Map();
+  const rawScores = new Map();
+  let neighbourCount = 0;
+
+  users.forEach((other) => {
+    const otherId = String(other.id || "");
+    if (!otherId || otherId === String(currentUserId)) return;
+    const otherInteractions = interactionMap.get(otherId) || new Map();
+    if (!otherInteractions.size) return;
+
+    const interestSimilarity = jaccard(
+      currentInterests,
+      new Set(other.interests || []),
+    );
+    const behaviourSimilarity = interactionSimilarity(
+      currentInteractions,
+      otherInteractions,
+    );
+
+    // Interest similarity supports new or low-activity users; behaviour becomes
+    // more important once interaction history exists.
+    const similarity = currentInteractions.size
+      ? interestSimilarity * 0.45 + behaviourSimilarity * 0.55
+      : interestSimilarity;
+
+    if (similarity <= 0) return;
+    neighbourCount += 1;
+
+    otherInteractions.forEach((weight, eventId) => {
+      if (currentInteractions.has(eventId)) return;
+      rawScores.set(eventId, (rawScores.get(eventId) || 0) + similarity * weight);
+    });
   });
 
-  return { seeds, tags, hosts, categories };
+  const maximum = Math.max(0, ...rawScores.values());
+  const scores = new Map();
+  rawScores.forEach((value, eventId) => {
+    scores.set(eventId, maximum > 0 ? clamp((value / maximum) * 100) : 0);
+  });
+
+  return { scores, neighbourCount, currentInteractionCount: currentInteractions.size };
+}
+
+function mapUser(row) {
+  return {
+    id: row.id,
+    programme: relationName(row.programmes),
+    faculty: relationName(row.faculties),
+    interests: (row.user_interests || [])
+      .map((link) => relationName(link.interests))
+      .filter(Boolean)
+      .map(normalizeText),
+  };
+}
+
+async function safeQuery(query, fallback = []) {
+  const { data, error } = await query;
+  if (error) {
+    console.warn("Hybrid recommendation data query failed:", error.message);
+    return fallback;
+  }
+  return data || fallback;
 }
 
 /**
- * Personalize breakdown for one event from user feedback.
+ * Loads the Supabase data required by the hybrid recommender.
+ * It gracefully falls back to content-based ranking when collaborative tables
+ * are unavailable or blocked by RLS.
  */
-export function computePersonalizedMatch(event, preferences = {}, allEvents = []) {
-  const interestedIds = preferences.interested || [];
-  const hiddenIds = preferences.hidden || [];
-  const interested = collectAffinity(allEvents, interestedIds);
-  const hidden = collectAffinity(allEvents, hiddenIds);
-
-  const baseline = event.match_breakdown || {};
-  const fallback = parseMatchNumber(event.match_score);
-
-  let interest =
-    Number(baseline.interest) ||
-    TAG_INTEREST_BASE[event.tag] ||
-    fallback ||
-    70;
-  let schedule = Number(baseline.schedule) || Math.max(0, fallback - 5) || 75;
-  let proximity =
-    Number(baseline.proximity) || Math.max(0, fallback - 10) || 70;
-  let social = Number(baseline.social) || Math.max(0, fallback - 15) || 65;
-
-  // Boost from Interested history
-  if (event.tag && interested.tags[event.tag]) {
-    interest += 8 * interested.tags[event.tag];
-  }
-  if (event.host && interested.hosts[event.host]) {
-    social += 6 * interested.hosts[event.host];
-  }
-  const cat = String(event.category || "").toLowerCase();
-  if (cat && interested.categories[cat]) {
-    schedule += 5 * interested.categories[cat];
+export async function loadHybridRecommendationContext(userId) {
+  if (!userId || userId === "guest") {
+    return {
+      userId: "guest",
+      currentUser: null,
+      collaborativeScores: new Map(),
+      scheduleRows: [],
+      collaborativeAvailable: false,
+      currentInteractionCount: 0,
+      neighbourCount: 0,
+    };
   }
 
-  // Penalize from Not interested history (similar clutter removal)
-  if (event.tag && hidden.tags[event.tag]) {
-    interest -= 10 * hidden.tags[event.tag];
-  }
-  if (event.host && hidden.hosts[event.host]) {
-    social -= 7 * hidden.hosts[event.host];
-  }
+  const [userRows, attendanceRows, rsvpRows, activityRows, scheduleRows] =
+    await Promise.all([
+      safeQuery(
+        supabase.from("users").select(`
+          id,
+          faculty_id,
+          programme_id,
+          faculties(name),
+          programmes(name),
+          user_interests(interests(name))
+        `),
+      ),
+      safeQuery(
+        supabase
+          .from("attendance")
+          .select("student_id, event_id, attended_at"),
+      ),
+      safeQuery(
+        supabase
+          .from("event_rsvps")
+          .select("student_id, event_id, status")
+          .in("status", ["registered", "waitlisted", "attended"]),
+      ),
+      safeQuery(
+        supabase
+          .from("user_activity_logs")
+          .select("student_id, entity_id, entity_type, activity_type")
+          .eq("entity_type", "event")
+          .in("activity_type", ["view", "save", "interested"]),
+      ),
+      safeQuery(
+        supabase
+          .from("student_schedule")
+          .select("student_id, day_of_week, start_time, end_time")
+          .eq("student_id", userId),
+      ),
+    ]);
 
-  // Pin: already marked interested
-  if (interestedIds.map(String).includes(String(event.id))) {
-    interest = Math.max(interest, 92);
-    social = Math.max(social, 88);
-  }
+  const users = userRows.map(mapUser);
+  const currentUser = users.find((user) => String(user.id) === String(userId)) || null;
+  const interactions = mergeInteractionMaps(
+    buildInteractionMap(attendanceRows, ATTENDANCE_WEIGHT),
+    buildInteractionMap(rsvpRows, RSVP_WEIGHT),
+    buildInteractionMap(activityRows, VIEW_WEIGHT),
+  );
+  const collaborative = buildCollaborativeScores({
+    currentUserId: userId,
+    users,
+    interactionMap: interactions,
+  });
 
-  interest = clamp(interest);
-  schedule = clamp(schedule);
-  proximity = clamp(proximity);
-  social = clamp(social);
+  return {
+    userId: String(userId),
+    currentUser,
+    collaborativeScores: collaborative.scores,
+    scheduleRows,
+    collaborativeAvailable: collaborative.scores.size > 0,
+    currentInteractionCount: collaborative.currentInteractionCount,
+    neighbourCount: collaborative.neighbourCount,
+  };
+}
 
+export function computeContentScore(event, currentUser, mode = "focus") {
+  const tokens = eventTokens(event);
+  const interests = new Set((currentUser?.interests || []).map(normalizeText));
+  const interestTokens = new Set();
+  interests.forEach((interest) => {
+    tokenize(interest).forEach((token) => interestTokens.add(token));
+  });
+
+  const interestMatch = overlapRatio(interestTokens, tokens);
+  const programmeTokens = tokenize(currentUser?.programme);
+  const facultyTokens = tokenize(currentUser?.faculty);
+  const programmeMatch = overlapRatio(programmeTokens, tokens);
+  const facultyMatch = overlapRatio(facultyTokens, tokens);
+  const modeMatch = normalizeText(event.category) === normalizeText(mode) ? 1 : 0;
+
+  // Interests dominate; profile and mode provide useful cold-start signals.
   const score = clamp(
-    interest * 0.4 + schedule * 0.3 + proximity * 0.2 + social * 0.1,
+    interestMatch * 60 + programmeMatch * 15 + facultyMatch * 10 + modeMatch * 15,
   );
 
   return {
-    interest,
-    schedule,
-    proximity,
-    social,
-    score,
-    match_score: `${score}%`,
-    match_breakdown: { interest, schedule, proximity, social },
+    score: score || (modeMatch ? 55 : 35),
+    interestMatch: clamp(interestMatch * 100),
+    programmeMatch: clamp(programmeMatch * 100),
+    facultyMatch: clamp(facultyMatch * 100),
+    modeMatch: clamp(modeMatch * 100),
   };
 }
 
 /**
- * Rank + personalize events for the Home feed.
- * Returns top recommendations only (less clutter).
+ * Rank events using content-based + collaborative filtering.
  */
 export function recommendEvents({
   events = [],
   preferences = {},
   mode = "focus",
   limit = MAX_RECOMMENDED,
+  hybridContext = null,
 } = {}) {
   const interestedIds = new Set((preferences.interested || []).map(String));
   const hiddenIds = new Set((preferences.hidden || []).map(String));
-  const modeKey = String(mode || "focus").toLowerCase();
+  const currentUser = hybridContext?.currentUser || null;
+  const collaborativeScores = hybridContext?.collaborativeScores || new Map();
+  const scheduleRows = hybridContext?.scheduleRows || [];
+  const hasCollaborativeData = Boolean(hybridContext?.collaborativeAvailable);
 
   const candidates = (events || []).filter(
     (event) => !hiddenIds.has(String(event.id)),
   );
 
   const scored = candidates.map((event) => {
-    const personal = computePersonalizedMatch(event, preferences, events);
-    let rank = personal.score;
+    const content = computeContentScore(event, currentUser, mode);
+    let collaborative = collaborativeScores.get(String(event.id)) || 0;
 
-    if (interestedIds.has(String(event.id))) rank += 1000;
-    if (String(event.category || "").toLowerCase() === modeKey) rank += 12;
-
-    // Soft penalty for tags the student rejected often
-    const hidden = collectAffinity(events, preferences.hidden || []);
-    if (event.tag && hidden.tags[event.tag]) {
-      rank -= 15 * hidden.tags[event.tag];
+    // The student's explicit card feedback is a strong personal signal.
+    if (interestedIds.has(String(event.id))) {
+      collaborative = Math.max(collaborative, 90);
     }
+
+    const contentWeight = hasCollaborativeData ? 0.6 : 1;
+    const collaborativeWeight = hasCollaborativeData ? 0.4 : 0;
+    let hybridScore = clamp(
+      content.score * contentWeight + collaborative * collaborativeWeight,
+    );
+
+    const timetableConflict = hasTimetableConflict(event, scheduleRows);
+    if (timetableConflict) hybridScore = clamp(hybridScore - 70);
+
+    const reasons = [];
+    if (content.interestMatch > 0) reasons.push("it matches your interests");
+    if (collaborative >= 60)
+      reasons.push("similar students engaged with this event");
+    if (content.modeMatch === 100)
+      reasons.push(`it fits your ${normalizeText(mode) === "balance" ? "Balance" : "Focus"} mode`);
+    if (!timetableConflict && scheduleRows.length)
+      reasons.push("it does not clash with your timetable");
+    if (interestedIds.has(String(event.id)))
+      reasons.unshift("you marked it as Interested");
 
     return {
       ...event,
-      match_score: personal.match_score,
-      match_breakdown: personal.match_breakdown,
-      recommendationScore: rank,
+      match_score: `${hybridScore}%`,
+      recommendationScore: hybridScore + (interestedIds.has(String(event.id)) ? 1000 : 0),
+      recommendation_source: hasCollaborativeData ? "hybrid" : "content",
+      content_score: content.score,
+      collaborative_score: collaborative,
+      hybrid_score: hybridScore,
+      timetable_conflict: timetableConflict,
+      match_breakdown: {
+        content: content.score,
+        collaborative,
+        interest: content.interestMatch,
+        programme: content.programmeMatch,
+        mode: content.modeMatch,
+        schedule: timetableConflict ? 0 : 100,
+      },
       whyRecommended:
-        interestedIds.has(String(event.id))
-          ? "You marked this Interested"
-          : event.tag && collectAffinity(events, preferences.interested || []).tags[event.tag]
-            ? `you liked ${event.tag} events`
-            : String(event.category || "").toLowerCase() === modeKey
-              ? `it fits your ${modeKey === "balance" ? "Balance" : "Focus"} mode`
-              : "it's a strong campus match",
+        reasons.slice(0, 3).join(", ") || "it is a relevant campus event",
     };
   });
 
@@ -197,6 +422,28 @@ export function recommendEvents({
   return {
     recommended: scored.slice(0, Math.max(1, limit)),
     totalAvailable: candidates.length,
+    recommendationMode: hasCollaborativeData ? "hybrid" : "content-based cold start",
+  };
+}
+
+/**
+ * Baseline scores used when admins create an event before personalised data is
+ * available. This remains content-oriented and is later replaced by the hybrid
+ * score on the student's feed.
+ */
+export function buildBaselineMatchScores(event = {}) {
+  const completeness = [event.tag, event.category, event.location, event.zone].filter(
+    (value) => String(value || "").trim(),
+  ).length;
+  const content = clamp(45 + completeness * 10);
+  return {
+    match_score: `${content}%`,
+    match_breakdown: {
+      content,
+      collaborative: 0,
+      interest: content,
+      schedule: 100,
+    },
   };
 }
 

@@ -11,6 +11,7 @@ import { getEventPreferences } from "../data/db";
 import { fetchCampusEvents } from "../services/campusEventsService";
 import {
   recommendEvents,
+  loadHybridRecommendationContext,
   RECOMMENDATION_LIMIT,
 } from "../services/eventRecommendationService";
 import {
@@ -40,6 +41,7 @@ export default function EventFeed({
   const [preferences, setPreferences] = useState(() =>
     getEventPreferences(userKey),
   );
+  const [hybridContext, setHybridContext] = useState(null);
   const [lastHidden, setLastHidden] = useState(null);
   const [undoTimer, setUndoTimer] = useState(null);
   const isFocus = category === "focus";
@@ -53,7 +55,10 @@ export default function EventFeed({
       setLoading(true);
       setLoadError("");
       try {
-        const result = await fetchCampusEvents({ category });
+        const result = await fetchCampusEvents({
+          category,
+          studentId: userKey !== "guest" ? userKey : null,
+        });
         if (cancelled) return;
         setEvents(result.events || []);
         setSource(result.source || "supabase");
@@ -71,7 +76,7 @@ export default function EventFeed({
     return () => {
       cancelled = true;
     };
-  }, [category]);
+  }, [category, userKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +84,24 @@ export default function EventFeed({
     loadEventPreferences(userKey).then((prefs) => {
       if (!cancelled) setPreferences(prefs);
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [userKey]);
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadHybridRecommendationContext(userKey)
+      .then((context) => {
+        if (!cancelled) setHybridContext(context);
+      })
+      .catch((error) => {
+        console.warn("Unable to load hybrid recommendation data:", error);
+        if (!cancelled) setHybridContext(null);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -102,8 +125,9 @@ export default function EventFeed({
       preferences: { interested: interestedEvents, hidden: hiddenEvents },
       mode: category,
       limit: RECOMMENDATION_LIMIT,
+      hybridContext,
     });
-  }, [events, hiddenEvents, interestedEvents, category]);
+  }, [events, hiddenEvents, interestedEvents, category, hybridContext]);
 
   useEffect(() => {
     return () => {
@@ -134,30 +158,18 @@ export default function EventFeed({
   };
 
   const matchMath = (event) => {
-    // recommendEvents already writes personalized match_breakdown onto each card
     const b = event.match_breakdown || {};
     const fallback =
       Number(String(event.match_score || "0").replace("%", "")) || 0;
-    const i = Number(b.interest) > 0 ? Number(b.interest) : fallback || 70;
-    const s =
-      Number(b.schedule) > 0
-        ? Number(b.schedule)
-        : Math.max(0, fallback - 5) || 75;
-    const p =
-      Number(b.proximity) > 0
-        ? Number(b.proximity)
-        : Math.max(0, fallback - 10) || 70;
-    const so =
-      Number(b.social) > 0
-        ? Number(b.social)
-        : Math.max(0, fallback - 15) || 65;
-    const weighted = i * 0.4 + s * 0.3 + p * 0.2 + so * 0.1;
+
     return {
-      interest: Math.round(i),
-      schedule: Math.round(s),
-      proximity: Math.round(p),
-      social: Math.round(so),
-      score: Math.round(weighted) || Math.round(fallback) || 70,
+      content: Math.round(Number(event.content_score ?? b.content ?? fallback)),
+      collaborative: Math.round(
+        Number(event.collaborative_score ?? b.collaborative ?? 0),
+      ),
+      interest: Math.round(Number(b.interest ?? 0)),
+      schedule: Math.round(Number(b.schedule ?? 100)),
+      score: Math.round(Number(event.hybrid_score ?? fallback)),
     };
   };
 
@@ -196,9 +208,9 @@ export default function EventFeed({
 
       {!loading && visibleEvents.length > 0 && (
         <p className="mb-3 text-[10px] font-inter text-gray-400">
-          Recommendation engine: tap Interested to boost similar topics, or Not
-          interested to hide them. Match % = 40% Interest + 30% Schedule + 20%
-          Proximity + 10% Social.
+          Hybrid recommendation: 60% content-based matching + 40% collaborative
+          filtering from similar students’ RSVPs and attendance. New users begin
+          with content-based recommendations until enough interaction data exists.
         </p>
       )}
 
@@ -319,20 +331,20 @@ export default function EventFeed({
 
                     <div className="mb-3 rounded-lg bg-white/5 border border-white/10 px-3 py-2">
                       <p className="text-[10px] font-inter text-gray-400">
-                        Match breakdown (personalised from your taps)
+                        Hybrid match breakdown
                       </p>
                       <div className="mt-1.5 flex flex-wrap gap-2">
                         <span className="text-[10px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-0.5">
-                          Interest {math.interest}%
+                          Content {math.content}%
+                        </span>
+                        <span className="text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 rounded px-2 py-0.5">
+                          Collaborative {math.collaborative}%
                         </span>
                         <span className="text-[10px] text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded px-2 py-0.5">
                           Schedule {math.schedule}%
                         </span>
                         <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-0.5">
-                          Proximity {math.proximity}%
-                        </span>
-                        <span className="text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 rounded px-2 py-0.5">
-                          Social {math.social}%
+                          Interest overlap {math.interest}%
                         </span>
                       </div>
                     </div>
