@@ -12,6 +12,7 @@ import { fetchCampusEvents } from "../services/campusEventsService";
 import {
   recommendEvents,
   loadHybridRecommendationContext,
+  saveEventRecommendations,
   RECOMMENDATION_LIMIT,
 } from "../services/eventRecommendationService";
 import {
@@ -128,6 +129,32 @@ export default function EventFeed({
       hybridContext,
     });
   }, [events, hiddenEvents, interestedEvents, category, hybridContext]);
+
+  useEffect(() => {
+    if (
+      userKey === "guest" ||
+      loading ||
+      !hybridContext ||
+      visibleEvents.length === 0
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    saveEventRecommendations({
+      studentId: userKey,
+      recommendations: visibleEvents,
+    }).then((result) => {
+      if (!cancelled && !result.success) {
+        console.warn("Unable to persist event recommendations:", result.error);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userKey, loading, hybridContext, visibleEvents]);
 
   useEffect(() => {
     return () => {

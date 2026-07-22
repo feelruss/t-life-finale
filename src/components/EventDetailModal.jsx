@@ -34,15 +34,29 @@ export default function EventDetailModal({
   const matchBreakdown = event.match_breakdown || {};
 
   const interest = Number(matchBreakdown.interest || 0);
-  const schedule = Number(matchBreakdown.schedule || 0);
-  const proximity = Number(matchBreakdown.proximity || 0);
-  const social = Number(matchBreakdown.social || 0);
+  const schedule = Number(matchBreakdown.schedule ?? 100);
+  const content = Number(
+    event.content_score ?? matchBreakdown.content ?? 0,
+  );
+  const collaborative = Number(
+    event.collaborative_score ?? matchBreakdown.collaborative ?? 0,
+  );
 
-  const weightedScore =
-    interest * 0.4 +
-    schedule * 0.3 +
-    proximity * 0.2 +
-    social * 0.1;
+  // Use the exact score produced by the hybrid recommendation engine.
+  // This keeps the event card and modal consistent.
+  const rawOverallScore =
+    event.hybrid_score ??
+    event.match_score ??
+    matchBreakdown.hybrid ??
+    0;
+
+  const overallMatchScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Number.parseFloat(String(rawOverallScore).replace("%", "")) || 0,
+    ),
+  );
 
   const registeredCount = Number(event.registered || 0);
   const capacityCount = Number(event.capacity || 0);
@@ -286,8 +300,8 @@ export default function EventDetailModal({
 
                 {(interest > 0 ||
                   schedule > 0 ||
-                  proximity > 0 ||
-                  social > 0) && (
+                  content > 0 ||
+                  collaborative > 0) && (
                   <div className="mb-4">
                     <h3 className="mb-2 text-xs font-outfit font-semibold text-gray-300">
                       Why this event matches you
@@ -300,7 +314,7 @@ export default function EventDetailModal({
                         </p>
 
                         <p className="text-lg font-outfit font-bold text-emerald-300">
-                          {Math.round(weightedScore)}%
+                          {Math.round(overallMatchScore)}%
                         </p>
                       </div>
                     </div>

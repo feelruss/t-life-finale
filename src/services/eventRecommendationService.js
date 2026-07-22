@@ -447,4 +447,72 @@ export function buildBaselineMatchScores(event = {}) {
   };
 }
 
+
+/**
+ * Persists the generated recommendations so the same scores can be loaded on
+ * refresh and inspected in Supabase. One row is stored per student and event.
+ */
+export async function saveEventRecommendations({
+  studentId,
+  recommendations = [],
+} = {}) {
+  if (!studentId || studentId === "guest") {
+    return { success: true, saved: 0, error: null };
+  }
+
+  if (!Array.isArray(recommendations) || recommendations.length === 0) {
+    return { success: true, saved: 0, error: null };
+  }
+
+  const rows = recommendations
+    .filter((event) => event?.id)
+    .map((event) => {
+      const rawMatchScore =
+        event.hybrid_score ?? event.match_score ?? 0;
+      const matchScore = clamp(
+        Number.parseFloat(String(rawMatchScore).replace("%", "")) || 0,
+      );
+
+      return {
+        student_id: studentId,
+        event_id: String(event.id),
+        match_score: matchScore,
+        match_breakdown: event.match_breakdown || {},
+        recommendation_reason:
+          event.whyRecommended || event.recommendation_reason || null,
+        generated_at: new Date().toISOString(),
+        content_score: clamp(
+          event.content_score ?? event.match_breakdown?.content ?? 0,
+        ),
+        collaborative_score: clamp(
+          event.collaborative_score ??
+            event.match_breakdown?.collaborative ??
+            0,
+        ),
+        hybrid_score: clamp(event.hybrid_score ?? matchScore),
+        recommendation_source: ["content", "collaborative", "hybrid"].includes(
+          event.recommendation_source,
+        )
+          ? event.recommendation_source
+          : "content",
+        timetable_conflict: Boolean(event.timetable_conflict),
+      };
+    });
+
+  if (!rows.length) {
+    return { success: true, saved: 0, error: null };
+  }
+
+  const { error } = await supabase
+    .from("event_recommendations")
+    .upsert(rows, { onConflict: "student_id,event_id" });
+
+  if (error) {
+    console.error("Failed to save event recommendations:", error);
+    return { success: false, saved: 0, error: error.message };
+  }
+
+  return { success: true, saved: rows.length, error: null };
+}
+
 export const RECOMMENDATION_LIMIT = MAX_RECOMMENDED;

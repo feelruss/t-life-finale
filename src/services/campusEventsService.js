@@ -23,7 +23,17 @@ export async function fetchCampusEvents({ category, studentId = null } = {}) {
     if (studentId && data?.length) {
       const { data: recs, error: recError } = await supabase
         .from("event_recommendations")
-        .select("event_id, match_score, match_breakdown, recommendation_reason")
+        .select(`
+          event_id,
+          match_score,
+          match_breakdown,
+          recommendation_reason,
+          content_score,
+          collaborative_score,
+          hybrid_score,
+          recommendation_source,
+          timetable_conflict
+        `)
         .eq("student_id", studentId)
         .in("event_id", data.map((event) => event.id));
       if (recError) throw recError;

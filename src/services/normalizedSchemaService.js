@@ -88,6 +88,24 @@ export function mapNormalizedCampusEvent(row, recommendation = null) {
     category: row.category || "focus",
     match_score: matchScore,
     match_breakdown: rec?.match_breakdown || baseline.match_breakdown,
+    content_score: Number(
+      rec?.content_score ??
+        rec?.match_breakdown?.content ??
+        baseline.match_breakdown.content ??
+        0,
+    ),
+    collaborative_score: Number(
+      rec?.collaborative_score ??
+        rec?.match_breakdown?.collaborative ??
+        0,
+    ),
+    hybrid_score: Number.parseFloat(
+      String(rec?.hybrid_score ?? rawScore ?? 0).replace("%", ""),
+    ) || 0,
+    recommendation_source: rec?.recommendation_source || "content",
+    timetable_conflict: Boolean(rec?.timetable_conflict),
+    recommendation_reason: rec?.recommendation_reason || null,
+    whyRecommended: rec?.recommendation_reason || null,
     friends_attending: 0,
     friendNames: [],
     tag: topicTag,
